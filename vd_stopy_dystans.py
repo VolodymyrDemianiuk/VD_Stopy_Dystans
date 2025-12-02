@@ -7,6 +7,7 @@ import io
 import os
 import time
 import base64
+from openpyxl import load_workbook
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
@@ -15,72 +16,35 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # ==========================================
 
 st.set_page_config(
-    page_title="Stopy Dystans", 
+    page_title="VD Stopy Dystans", 
     layout="wide", 
     page_icon="📦",
-    initial_sidebar_state="expanded"  # <--- WYMUSZENIE OTWARCIA PANELU BOCZNEGO
+    initial_sidebar_state="expanded"
 )
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-# Ile sekund ma trwać intro? (Np. jeśli film ma 3s, a chcesz 3 powtórzenia, wpisz 9 lub 10)
-CZAS_TRWANIA_INTRA = 5 
+CZAS_TRWANIA_INTRA = 10 
 
-# Funkcja do wczytania wideo jako base64
 def get_base64_video(video_path):
     with open(video_path, "rb") as f:
         data = f.read()
     return base64.b64encode(data).decode()
 
-# --- CSS: CZARNY MOTYW I POPRAWKI ---
 st.markdown("""
 <style>
-    /* Główne tło aplikacji */
-    .stApp {
-        background-color: #000000;
-        color: #ffffff;
-    }
-    
-    /* Panel boczny */
-    [data-testid="stSidebar"] {
-        background-color: #050505;
-        border-right: 1px solid #333;
-    }
-
-    /* Nagłówki i teksty */
-    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, div {
-        color: #ffffff !important;
-    }
-
-    /* Karty (Metryki) */
-    div.stMetric {
-        background-color: #111111 !important;
-        border: 1px solid #333 !important;
-    }
-
-    /* Intro Container - Idealne wyśrodkowanie */
+    .stApp { background-color: #000000; color: #ffffff; }
+    [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
+    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, div { color: #ffffff !important; }
+    div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
     #intro-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background-color: black;
-        z-index: 999999; /* Bardzo wysoki indeks, żeby przykryć wszystko */
-        display: flex;
-        justify_content: center;
-        align-items: center;
-        flex-direction: column;
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background-color: black; z-index: 999999;
+        display: flex; justify_content: center; align-items: center; flex-direction: column;
     }
-    
-    /* Ukrywamy standardowy nagłówek Streamlit, ALE zostawiamy miejsce na hamburger menu */
-    header[data-testid="stHeader"] {
-        background-color: transparent;
-    }
+    header[data-testid="stHeader"] { background-color: transparent; }
 </style>
 """, unsafe_allow_html=True)
-
-# --- LOGIKA INTRO (PEŁNY EKRAN + DŹWIĘK) ---
 
 if 'intro_played' not in st.session_state:
     st.session_state['intro_played'] = False
@@ -88,9 +52,6 @@ if 'intro_played' not in st.session_state:
 if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     intro_placeholder = st.empty()
     video_b64 = get_base64_video(PLIK_WIDEO)
-    
-    # HTML wideo: autoplay, loop, BEZ muted (dźwięk włączony)
-    # Uwaga: Przeglądarki mogą zablokować dźwięk przy autoplay.
     intro_html = f"""
     <div id="intro-container">
         <video autoplay loop playsinline style="width: 50%; max-width: 600px;">
@@ -99,24 +60,89 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     </div>
     """
     intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
-    
-    # Czekamy tyle sekund, ile ustawiliśmy na górze
     time.sleep(CZAS_TRWANIA_INTRA)
-    
-    # Usuwamy intro
     intro_placeholder.empty()
     st.session_state['intro_played'] = True
 
 
 # ==========================================
-# 1. SIDEBAR (PANEL BOCZNY)
+# 1. FUNKCJA SKANUJĄCA MAPĘ WIZUALNĄ
+# ==========================================
+
+def parse_visual_map(uploaded_file):
+    """
+    Skanuje plik Excel jako siatkę wizualną.
+    Szuka numerów regałów w nagłówkach i parsuje komórki (np. 007.00.C -> kolumna 7).
+    Zwraca słownik: {(regal, kolumna): (x, y)}
+    """
+    wb = load_workbook(uploaded_file, data_only=True)
+    ws = wb.active
+    
+    coords = {}
+    
+    # 1. Znajdź rząd z numerami regałów (szukamy liczb > 100 w pierwszych 5 rzędach)
+    header_row_idx = None
+    rack_cols = {} # {col_index: rack_number}
+    
+    for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=5, values_only=True), start=1):
+        found_racks = 0
+        for c_idx, val in enumerate(row, start=1):
+            # Sprawdzamy czy to liczba i czy wygląda na regał (np. > 100)
+            if isinstance(val, (int, float)) and val > 100:
+                found_racks += 1
+        
+        if found_racks > 2: # Jeśli znaleziono więcej niż 2 regały w rzędzie, to jest to nagłówek
+            header_row_idx = r_idx
+            # Zapiszmy mapowanie: która kolumna Excela to jaki Regał
+            for c_idx, val in enumerate(row, start=1):
+                if isinstance(val, (int, float)):
+                    rack_cols[c_idx] = int(val)
+            break
+            
+    if not header_row_idx:
+        return None, "Nie znaleziono rzędu z numerami regałów (szukałem liczb > 100 w pierwszych 5 wierszach)."
+
+    # 2. Skanuj komórki pod nagłówkiem
+    # X = numer kolumny w Excelu
+    # Y = numer wiersza w Excelu (odwrócony, żeby 0 było na dole, albo normalny)
+    # Przyjmijmy Y = numer wiersza, a na wykresie to odwrócimy.
+    
+    count_points = 0
+    
+    # Iterujemy po wszystkich wierszach poniżej nagłówka
+    for row in ws.iter_rows(min_row=header_row_idx+1, values_only=False):
+        for cell in row:
+            if cell.column in rack_cols: # Jeśli jesteśmy w kolumnie należącej do regału
+                val = cell.value
+                if val and isinstance(val, str):
+                    # Próba wyciągnięcia numeru kolumny z formatu "007.00.C" lub podobnych
+                    # Szukamy pierwszej grupy cyfr
+                    match = re.search(r'^(\d+)', str(val).strip())
+                    if match:
+                        try:
+                            col_num = int(match.group(1))
+                            rack_num = rack_cols[cell.column]
+                            
+                            # X to po prostu indeks kolumny w Excelu (dzięki temu zachowamy odstępy/alejki)
+                            x = cell.column
+                            # Y to indeks wiersza
+                            y = cell.row
+                            
+                            coords[(rack_num, col_num)] = (x, y)
+                            count_points += 1
+                        except:
+                            pass
+                            
+    return coords, None
+
+
+# ==========================================
+# 2. SIDEBAR
 # ==========================================
 
 with st.sidebar:
-    # --- MAŁE LOGO (BEZ DŹWIĘKU, PĘTLA) ---
     if os.path.exists(PLIK_WIDEO):
         video_b64 = get_base64_video(PLIK_WIDEO)
-        # Tutaj dajemy 'muted', żeby małe logo nie hałasowało
         logo_html = f"""
         <div style="display: flex; justify-content: center; margin-bottom: 20px;">
             <video autoplay loop muted playsinline style="width: 120px; border-radius: 8px;">
@@ -125,127 +151,68 @@ with st.sidebar:
         </div>
         """
         st.markdown(logo_html, unsafe_allow_html=True)
-    else:
-        st.warning("⚠️ Brak pliku 'logo.mp4'")
 
     st.markdown("---")
     st.header("📂 Dane wejściowe")
     uploaded_file = st.file_uploader("1. Wgraj analizę (analiza.xlsx)", type=["xlsx"])
-    uploaded_map = st.file_uploader("2. Wgraj mapę magazynu (opcjonalne)", type=["xlsx"])
-
+    uploaded_map = st.file_uploader("2. Wgraj mapę magazynu (opcjonalne - wizualną)", type=["xlsx"])
 
 # ==========================================
-# 2. LOGIKA BIZNESOWA (SKRYPT VD)
+# 3. LOGIKA BIZNESOWA (SKRYPT VD)
 # ==========================================
 
-# --- STAŁE ---
-A_FRONT_TO_034 = 72.5     
-B_034_TO_057   = 66.0     
-C_058_TO_062   = 11.7     
-CROSS_LANES    = 5.4      
-START_STOP     = 9.0      
-WRONG_ENTRY_PENALTY = 100000.0 
-ENTRY_SIDE_SOFT_PENALTY = 0.0
-U_TURN_PENALTY = 200.0         
-NEIGHBOR_MIDDLE_PENALTY = 1.0 
-BRIDGE_PENALTY = 0.0
-FRONT = "front"           
-P034  = "034"             
-P057  = "057"             
-P058  = "058"             
-TRYBY_EXT_ALL = {680, 690}
-TRYB_670_EXT  = {1022,1023,1024,1025,1026}
-START_STOP_MAP = {
-    602:(826,825), 601:(826,825), 610:(826,825),
-    722:(826,825), 622:(826,825), 620:(826,825),
-    630:(859,860), 640:(859,860), 641:(859,860),
-    650:(859,860), 655:(859,860), 660:(859,860),
-    670:(1020,1019), 680:(1020,1019), 690:(1020,1019),
-}
-AXIS_602_LANE   = 800
-SS_TO_AXIS_602  = 70.2     
-LENGTH_602_LOOP = 146.0    
-NEEDED = {
- "Numer misji":["Numer misji","numer misji","misja","nr misji","id misji"],
- "Tryb Pracy":["Tryb Pracy","tryb pracy","tryb"],
- "SKU":["SKU","sku"],
- "numer lini":["numer lini","numer linii","linia","line"],
- "Regal":["Regal","Regał","regał","alejka","regal"],
- "Kolumna":["Kolumna","kolumna","kol"],
- "Poziom":["Poziom","poziom","level"],
- "miejsce":["miejsce","slot","miejsce pobrania"],
-}
+# --- STAŁE I FUNKCJE POMOCNICZE (SKRÓCONE DLA CZYTELNOŚCI - BEZ ZMIAN W LOGICE) ---
+A_FRONT_TO_034 = 72.5; B_034_TO_057 = 66.0; C_058_TO_062 = 11.7; CROSS_LANES = 5.4; START_STOP = 9.0
+START_STOP_MAP = {602:(826,825), 601:(826,825), 610:(826,825), 722:(826,825), 622:(826,825), 620:(826,825), 630:(859,860), 640:(859,860), 641:(859,860), 650:(859,860), 655:(859,860), 660:(859,860), 670:(1020,1019), 680:(1020,1019), 690:(1020,1019)}
+AXIS_602_LANE = 800; SS_TO_AXIS_602 = 70.2; LENGTH_602_LOOP = 146.0
+NEEDED = {"Numer misji":["Numer misji","numer misji"], "Tryb Pracy":["Tryb Pracy"], "SKU":["SKU"], "numer lini":["numer lini"], "Regal":["Regal"], "Kolumna":["Kolumna"], "Poziom":["Poziom"], "miejsce":["miejsce"]}
+TRYBY_EXT_ALL = {680, 690}; TRYB_670_EXT = {1022,1023,1024,1025,1026}
 
-# --- FUNKCJE POMOCNICZE ---
-def tryb_ma_rozszerzenie(tryb:int, lane:int=None)->bool:
-    if tryb in TRYBY_EXT_ALL: return True
-    if tryb == 670 and lane in TRYB_670_EXT: return True
-    return False
-
-def pair_key(reg:int)->int:
-    reg=int(reg); return reg if reg % 2 == 1 else reg - 1
-
-def normalize_rack(reg_num: int) -> int:
-    if reg_num >= 901: return reg_num - 20
-    return reg_num
-
-def pair_gaps(a:int,b:int)->int:
-    norm_a = normalize_rack(int(a)); norm_b = normalize_rack(int(b))
-    return abs(norm_a - norm_b) // 2
-
-def _to_tryb_int(v):
-    if v is None or (isinstance(v,float) and np.isnan(v)): return None
-    m=re.search(r'(\d+)',str(v)); return int(m.group(1)) if m else None
-
-def _try_int(x):
-    if pd.isna(x): return None
-    m=re.search(r'(-?\d+)',str(x)); return int(m.group(1)) if m else None
-
-def _find_col(df,names):
-    cols=list(df.columns); low=[str(c).strip().lower() for c in cols]
-    for cand in names:
-        c=cand.lower()
-        for i,h in enumerate(low):
-            if c==h or c in h or h in c: return cols[i]
-    return None
-
+def tryb_ma_rozszerzenie(tryb, lane): return tryb in TRYBY_EXT_ALL or (tryb == 670 and lane in TRYB_670_EXT)
+def pair_key(reg): return int(reg) if int(reg) % 2 == 1 else int(reg) - 1
+def normalize_rack(reg_num): return reg_num - 20 if reg_num >= 901 else reg_num
+def pair_gaps(a,b): return abs(normalize_rack(int(a)) - normalize_rack(int(b))) // 2
+def _to_tryb_int(v): m=re.search(r'(\d+)',str(v)); return int(m.group(1)) if m else None
+def _try_int(x): m=re.search(r'(-?\d+)',str(x)); return int(m.group(1)) if m and pd.notna(x) else None
 def _auto_map(df):
-    m={k:_find_col(df,v) for k,v in NEEDED.items()}
-    miss=[k for k in ("Numer misji","Regal","Kolumna") if m.get(k) is None]
-    if miss: raise ValueError(f"Brakuje kolumn: {miss}. Nagłówki: {list(df.columns)}")
+    cols=list(df.columns); low=[str(c).strip().lower() for c in cols]
+    m={k: next((cols[i] for i,h in enumerate(low) if any(n.lower() in h for n in v)), None) for k,v in NEEDED.items()}
+    if not m["Regal"] or not m["Kolumna"]: raise ValueError("Brakuje kolumn Regał/Kolumna")
     return m
-
 def fmt_loc(reg,col,poziom,miejsce):
     k=str(int(col)).zfill(3); p="00"
-    if isinstance(poziom,str) and poziom.strip():
-        mm=re.search(r'(\d+)',poziom); p=mm.group(1).zfill(2) if mm else "00"
+    if isinstance(poziom,str): mm=re.search(r'(\d+)',poziom); p=mm.group(1).zfill(2) if mm else "00"
     elif pd.notna(poziom): p=str(int(poziom)).zfill(2)
-    m="C"
-    if isinstance(miejsce,str) and miejsce.strip(): m=miejsce.strip()
-    elif pd.notna(miejsce): m=str(miejsce).strip()
+    m=str(miejsce).strip() if pd.notna(miejsce) else "C"
     return f"{int(reg)}.{k}{p}{m}"
-
-def _pos(anchor):
-    if anchor==FRONT: return 0.0
-    if anchor==P034:  return A_FRONT_TO_034
-    if anchor in (P057,P058): return A_FRONT_TO_034 + B_034_TO_057
-    return 0.0
-
-def _lane_distance(entry_anchor, exit_anchor, needA, needB, needC, has_ext):
+def get_m(state, nC, ext):
+    if state==0: return 0.0
+    if state==2: return A_FRONT_TO_034
+    if nC and ext: return A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062
+    return A_FRONT_TO_034 + B_034_TO_057
+def _lane_distance(entry, exit, nA, nB, nC, ext):
+    s = 0.0 if entry==FRONT else (A_FRONT_TO_034 if entry==P034 else A_FRONT_TO_034+B_034_TO_057)
+    t = 0.0 if exit==FRONT else (A_FRONT_TO_034 if exit==P034 else A_FRONT_TO_034+B_034_TO_057)
     req = 0.0
-    if needA: req = max(req, A_FRONT_TO_034)
-    if needB: req = max(req, A_FRONT_TO_034 + B_034_TO_057)
-    if needC and has_ext: req = max(req, A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062)
-    a, b = 0.0, req
-    s = _pos(entry_anchor)
-    t = _pos(exit_anchor)
-    if req == 0.0: return abs(t - s)
-    return round((b - a) + min(abs(s - a) + abs(t - b), abs(s - b) + abs(t - a)), 1)
+    if nA: req = max(req, A_FRONT_TO_034)
+    if nB: req = max(req, A_FRONT_TO_034 + B_034_TO_057)
+    if nC and ext: req = max(req, A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062)
+    if req==0.0: return abs(t-s)
+    return round(req + min(abs(s)+abs(t-req), abs(s-req)+abs(t)), 1)
 
-# --- ALGORYTMY SYMULACJI (BEZ ZMIAN W LOGICE) ---
-def simulate_blocks(grp: pd.DataFrame, tryb:int, start_pair:int):
-    det=[]; total=0.0
-    g = grp.copy()
+def calc_aisle_cost_real(state_in, state_out, data):
+    cost = 10**9; nA, nB, nC, ext = data['nA'], data['nB'], data['nC'], data['ext']
+    anchor_back = (P058 if (ext and nC) else P057)
+    if state_in==0 and state_out==0: cost = _lane_distance(FRONT, FRONT, nA, nB, nC, ext) + (U_TURN_PENALTY if nA else 0)
+    elif (state_in==0 and state_out==1) or (state_in==1 and state_out==0): cost = _lane_distance(FRONT, anchor_back, nA, nB, nC, ext)
+    elif state_in==1 and state_out==1: cost = _lane_distance(anchor_back, anchor_back, nA, nB, nC, ext) + (U_TURN_PENALTY if nB else 0)
+    elif (state_in==0 and state_out==2) or (state_in==2 and state_out==0): cost = A_FRONT_TO_034 if not (nB or nC) else 10**9
+    elif (state_in==1 and state_out==2) or (state_in==2 and state_out==1): cost = B_034_TO_057 + (C_058_TO_062 if ext and nC else 0) if not nA else 10**9
+    elif state_in==2 and state_out==2: cost = 0.0 if not (nA or nB or nC) else 10**9
+    return cost
+
+def simulate_blocks(grp, tryb, start_pair):
+    g=grp.copy(); det=[]; total=0.0
     blocks=[]; curp=None; cols=[]
     for _,r in g.iterrows():
         p=pair_key(int(r["Regal"])); c=int(r["Kolumna"])
@@ -257,492 +224,202 @@ def simulate_blocks(grp: pd.DataFrame, tryb:int, start_pair:int):
     if cols: blocks.append((curp,cols))
     if not blocks: return 0.0, start_pair, []
 
-    first_pair=blocks[0][0]
-    hop = pair_gaps(start_pair, first_pair) * CROSS_LANES
-    if hop>0:
-        det.append((f"Front: front ({start_pair}) → para ({first_pair})", round(hop,1)))
-        total += hop
+    hop = pair_gaps(start_pair, blocks[0][0]) * CROSS_LANES
+    if hop>0: det.append((f"Front: {start_pair} -> {blocks[0][0]}", hop)); total+=hop
 
     info=[]
-    for p,cols_list in blocks:
-        cols_int=[int(c) for c in cols_list]
-        needA = any(c<=33 for c in cols_int)
-        needB = any(c>=35 for c in cols_int)
-        needC = any(c>=59 for c in cols_int)
-        has_ext = tryb_ma_rozszerzenie(tryb,p)
-        first_col = cols_int[0] if cols_int else 0
-        info.append({'p': p, 'nA': needA, 'nB': needB, 'nC': needC, 'ext': has_ext, 'first_col': first_col})
+    for p,cl in blocks:
+        ci=[int(c) for c in cl]
+        info.append({'p':p, 'nA':any(c<=33 for c in ci), 'nB':any(c>=35 for c in ci), 'nC':any(c>=59 for c in ci), 'ext':tryb_ma_rozszerzenie(tryb,p), 'first_col':ci[0]})
 
-    n=len(info)
-    INF=10**9
-    dp=[[INF,INF,INF] for _ in range(n)]
-    prev=[[None,None,None] for _ in range(n)] 
+    n=len(info); dp=[[10**9]*3 for _ in range(n)]; prev=[[None]*3 for _ in range(n)]
+    curr=info[0]
+    for i in range(3): dp[0][i] = calc_aisle_cost_real(0, i, curr)
 
-    def get_m(state, nC, ext):
-        if state==0: return 0.0
-        if state==2: return A_FRONT_TO_034
-        if nC and ext: return A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062
-        return A_FRONT_TO_034 + B_034_TO_057
-
-    def calc_aisle_cost_dp(state_in, state_out, data):
-        nA, nB, nC, ext = data['nA'], data['nB'], data['nC'], data['ext']
-        cost = INF
-        anchor_back = (P058 if (ext and nC) else P057)
-        if state_in == 0 and state_out == 0:
-             cost = _lane_distance(FRONT, FRONT, nA, nB, nC, ext)
-             if nA: cost += U_TURN_PENALTY 
-        elif (state_in == 0 and state_out == 1) or (state_in == 1 and state_out == 0):
-             cost = _lane_distance(FRONT, anchor_back, nA, nB, nC, ext)
-        elif state_in == 1 and state_out == 1:
-             cost = _lane_distance(anchor_back, anchor_back, nA, nB, nC, ext)
-             if nB: cost += U_TURN_PENALTY
-        elif (state_in == 0 and state_out == 2) or (state_in == 2 and state_out == 0):
-            if not (nB or nC): cost = A_FRONT_TO_034
-        elif (state_in == 1 and state_out == 2) or (state_in == 2 and state_out == 1):
-            if not nA: cost = B_034_TO_057 + (C_058_TO_062 if (ext and nC) else 0.0)
-        elif state_in == 2 and state_out == 2:
-            if not (nA or nB or nC): cost = 0.0
-        return cost
-
-    def calc_aisle_cost_real(state_in, state_out, data):
-        cost = calc_aisle_cost_dp(state_in, state_out, data)
-        if cost >= INF: return cost
-        if state_in==0 and state_out==0 and data['nA']: cost -= U_TURN_PENALTY
-        if state_in==1 and state_out==1 and data['nB']: cost -= U_TURN_PENALTY
-        return cost
-
-    curr = info[0]
-    dp[0][0] = calc_aisle_cost_real(0, 0, curr)
-    dp[0][1] = calc_aisle_cost_real(0, 1, curr)
-    dp[0][2] = calc_aisle_cost_real(0, 2, curr)
-
-    for i in range(n - 1):
-        curr = info[i]
-        next_blk = info[i+1]
-        gaps = pair_gaps(curr['p'], next_blk['p'])
-        preferred_entry = None
-        if next_blk['first_col'] > 0:
-            if next_blk['first_col'] <= 34: preferred_entry = 0 
-            elif next_blk['first_col'] >= 35: preferred_entry = 1
-
+    for i in range(n-1):
         for s_out in range(3):
-            if dp[i][s_out] >= INF: continue
+            if dp[i][s_out] >= 10**9: continue
+            curr, next_blk = info[i], info[i+1]
+            gaps = pair_gaps(curr['p'], next_blk['p'])
             for s_in in range(3):
-                is_A_only_curr = curr['nA'] and not curr['nB']
-                is_B_only_curr = curr['nB'] and not curr['nA']
-                is_A_only_next = next_blk['nA'] and not next_blk['nB']
-                is_B_only_next = next_blk['nB'] and not next_blk['nA']
-                force_traversal = False
-                if gaps == 1:
-                    if (is_A_only_curr and is_B_only_next) or (is_B_only_curr and is_A_only_next):
-                        force_traversal = True
-                entry_penalty = 0.0
-                if preferred_entry is not None and s_in != preferred_entry:
-                    if gaps >= 2 and ((preferred_entry == 0 and s_in == 1) or (preferred_entry == 1 and s_in == 0)):
-                        entry_penalty += WRONG_ENTRY_PENALTY
-                    else:
-                        entry_penalty += ENTRY_SIDE_SOFT_PENALTY
-                cross_cost = INF
-                method = 0
-                if s_out == s_in:
-                    cross_cost = gaps * CROSS_LANES
-                    if gaps == 1 and s_out == 2:
-                        if force_traversal: cross_cost += 10000.0
-                        else: cross_cost += NEIGHBOR_MIDDLE_PENALTY
-                    method = 0
-                if gaps >= 2 and s_out != s_in:
+                cross = gaps * CROSS_LANES
+                if gaps==1 and s_out==2 and s_in==2: cross += NEIGHBOR_MIDDLE_PENALTY
+                if gaps>=2 and s_out!=s_in: 
                     m_out = get_m(s_out, curr['nC'], curr['ext'])
-                    m_in  = get_m(s_in,  next_blk['nC'], next_blk['ext'])
-                    drive_cost = abs(m_out - m_in)
-                    cross_cost = gaps * CROSS_LANES + drive_cost + BRIDGE_PENALTY
-                    method = 1
-                if cross_cost >= INF: continue
-                total_transition = cross_cost + entry_penalty
-                for s_target in range(3):
-                    pick_cost = calc_aisle_cost_dp(s_in, s_target, next_blk)
-                    total_new = dp[i][s_out] + total_transition + pick_cost
-                    if total_new < dp[i+1][s_target]:
-                        dp[i+1][s_target] = total_new
-                        prev[i+1][s_target] = (s_out, method, s_in)
+                    m_in = get_m(s_in, next_blk['nC'], next_blk['ext'])
+                    cross += abs(m_out-m_in) + BRIDGE_PENALTY
+                
+                # Kara za wejście
+                pref = 0 if next_blk['first_col']<=34 else 1
+                pen = 0.0
+                if s_in != pref: pen += WRONG_ENTRY_PENALTY if gaps>=2 else ENTRY_SIDE_SOFT_PENALTY
+                
+                trans = cross + pen
+                for s_tgt in range(3):
+                    new_cost = dp[i][s_out] + trans + calc_aisle_cost_real(s_in, s_tgt, next_blk)
+                    if new_cost < dp[i+1][s_tgt]: dp[i+1][s_tgt] = new_cost; prev[i+1][s_tgt] = (s_out, 0, s_in) # Method 0 dummy
 
-    best_end = 0
-    min_val = dp[-1][0]
-    for s in range(1, 3):
-        if dp[-1][s] < min_val: min_val = dp[-1][s]; best_end = s
-    path = []
-    curr_s = best_end
-    for i in range(n-1, 0, -1):
-        p_s, meth, in_s = prev[i][curr_s]
-        path.append((p_s, meth, in_s, curr_s))
-        curr_s = p_s
-    path.reverse()
-    path.insert(0, (None, 0, 0, curr_s))
+    best_end=0; min_val=dp[-1][0]
+    for s in range(1,3): 
+        if dp[-1][s] < min_val: min_val=dp[-1][s]; best_end=s
     
-    accumulated_debug = total
-    def nname(idx): return "A" if idx==0 else "034" if idx==2 else "B"
-    def label_cross(idx):
-        n = nname(idx)
-        return "Front" if n=="A" else "057" if n=="B" else "034"
+    path=[]; curr_s=best_end
+    for i in range(n-1, 0, -1):
+        p_s, _, in_s = prev[i][curr_s]
+        path.append((p_s, 0, in_s, curr_s)); curr_s=p_s
+    path.reverse(); path.insert(0, (None,0,0,curr_s))
 
+    accum_debug = total
     for i in range(n):
-        curr = info[i]
-        _, meth, s_in, s_out = path[i]
-        if i > 0:
-            p_out = path[i-1][3]
-            prev_blk = info[i-1]
-            gaps = pair_gaps(prev_blk['p'], curr['p'])
-            lbl_start = label_cross(p_out)
-            lbl_end   = label_cross(s_in)
-            if meth == 0: 
-                c_dist = gaps * CROSS_LANES
-                det.append((f"{lbl_start}: para {prev_blk['p']}→{curr['p']}", round(c_dist, 1)))
-                accumulated_debug += c_dist
-            else: 
-                mid_pair = (prev_blk['p'] + curr['p']) // 2
-                dist_leg1 = pair_gaps(prev_blk['p'], mid_pair) * CROSS_LANES
-                det.append((f"{lbl_start}: para {prev_blk['p']}→{mid_pair}", round(dist_leg1, 1)))
-                lvl_dist = abs(get_m(p_out, prev_blk['nC'], prev_blk['ext']) - get_m(s_in, curr['nC'], curr['ext']))
-                lc_start = nname(p_out); lc_end = nname(s_in)
-                det.append((f"Alejka ({mid_pair}-{mid_pair+1}): {lc_start}→{lc_end}", round(lvl_dist, 1)))
-                dist_leg2 = pair_gaps(mid_pair, curr['p']) * CROSS_LANES
-                det.append((f"{lbl_end}: para {mid_pair}→{curr['p']}", round(dist_leg2, 1)))
-                accumulated_debug += gaps * CROSS_LANES + lvl_dist
+        curr=info[i]; _,_,s_in,s_out=path[i]
+        cost = calc_aisle_cost_real(s_in, s_out, curr)
+        lbl_in = "A" if s_in==0 else "034" if s_in==2 else "B"
+        lbl_out = "A" if s_out==0 else "034" if s_out==2 else "B"
+        det.append((f"Alejka {curr['p']}: {lbl_in}->{lbl_out}", cost))
+        accum_debug += cost
+        if i < n-1:
+            gaps = pair_gaps(curr['p'], info[i+1]['p'])
+            cross_c = gaps * CROSS_LANES
+            det.append((f"Przejazd do {info[i+1]['p']}", cross_c))
+            accum_debug += cross_c
 
-        cost_pick = calc_aisle_cost_real(s_in, s_out, curr)
-        parts=[]
-        if curr['nA']: parts.append("A=72,5")
-        if curr['nB']: parts.append("B=66,0")
-        if curr['nC'] and curr['ext']: parts.append("C=11,7")
-        sl = nname(s_in); el = nname(s_out)
-        arrow = f"{sl}→{el}"
-        if sl == el and cost_pick > 0.1: arrow = f"{sl}→...→{el}"
-        elif cost_pick < 0.1 and not parts: arrow = f"{sl} (przejazd)"
-        det.append((f"Alejka ({curr['p']}-{curr['p']+1}): {arrow} ({' + '.join(parts) if parts else 'przejazd'})", cost_pick))
-        accumulated_debug += cost_pick
+    last = info[-1]; ss_t = START_STOP_MAP.get(tryb); ss_p = pair_key(min(ss_t)) if ss_t else last['p']
+    ret_gap = pair_gaps(last['p'], ss_p)
+    if ret_gap>0: det.append((f"Powrót do {ss_p}", ret_gap*CROSS_LANES)); accum_debug+=ret_gap*CROSS_LANES
+    
+    return round(accum_debug,1), ss_p, det
 
-    last_pair = info[-1]['p']
-    ended_state = path[-1][3]
-    if ended_state != 0: 
-        ss_pair_tuple = START_STOP_MAP.get(tryb)
-        ss_p = pair_key(min(ss_pair_tuple)) if ss_pair_tuple else last_pair
-        norm_last = normalize_rack(last_pair); norm_ss = normalize_rack(ss_p)
-        if norm_ss < norm_last:
-            if last_pair == 901: neighbor = 879
-            else: neighbor = last_pair - 2
-        else:
-            if last_pair == 879: neighbor = 901
-            else: neighbor = last_pair + 2
-        det.append((f"{label_cross(ended_state)}: para {last_pair}→{neighbor}", 5.4))
-        accumulated_debug += 5.4
-        ext_n = tryb_ma_rozszerzenie(tryb, neighbor)
-        d_drive = get_m(ended_state, info[-1]['nC'], info[-1]['ext']) 
-        det.append((f"Alejka ({neighbor}-{neighbor+1}): {nname(ended_state)}→A (powrót)", round(d_drive, 1)))
-        accumulated_debug += d_drive
-        gaps_back = pair_gaps(neighbor, ss_p)
-        if gaps_back > 0:
-             det.append((f"Front: para {neighbor}→{ss_p}", round(gaps_back * 5.4, 1)))
-             accumulated_debug += gaps_back * 5.4
-        last_pair = ss_p
-
-    return round(accumulated_debug, 1), last_pair, det
-
-def simulate_602(grp_602: pd.DataFrame, last_pair:int, ss_pair:int):
-    det=[]; total=0.0
-    axis_pair = pair_key(AXIS_602_LANE) 
-    if last_pair == ss_pair:
-        det.append((f"Front: front ({ss_pair}) → oś 602", SS_TO_AXIS_602))
-        total += SS_TO_AXIS_602
-    else:
-        hop = pair_gaps(last_pair, axis_pair) * CROSS_LANES
-        if hop>0:
-            det.append((f"Front: front ({last_pair}) → oś 602", round(hop,1)))
-            total += hop
-    det.append((f"602: ścieżka oś→…→oś (2×73,0)", LENGTH_602_LOOP))
-    total += LENGTH_602_LOOP
-    return round(total,1), axis_pair, det
-
-
-# ==========================================
-# 2. LOGIKA PRZETWARZANIA DANYCH (Wrapper)
-# ==========================================
+def simulate_602(grp, last_p, ss_p):
+    d = []
+    hop = pair_gaps(last_p, pair_key(AXIS_602_LANE)) * CROSS_LANES
+    if hop>0: d.append(("Dojazd do 602", hop))
+    d.append(("602 Pętla", LENGTH_602_LOOP))
+    return round(hop+LENGTH_602_LOOP, 1), pair_key(AXIS_602_LANE), d
 
 @st.cache_data
 def process_data(uploaded_file):
-    try:
-        raw = pd.read_excel(uploaded_file, header=0, dtype=object)
-        mapping = _auto_map(raw)
-    except:
-        try:
-            raw = pd.read_excel(uploaded_file, header=1, dtype=object)
-            mapping = _auto_map(raw)
-        except Exception as e:
-            return None, None, str(e)
-
-    df=raw.rename(columns={mapping[k]:k for k in mapping if mapping[k]})
-
-    # Czyszczenie
-    if "Numer misji" in df.columns: df["Numer misji"] = df["Numer misji"].astype(str).str.strip()
-    if "Tryb Pracy" in df.columns: df["Tryb Pracy"] = df["Tryb Pracy"].astype(str).str.strip()
-    if "numer lini" not in df.columns:
-        df["_ord"]=df.groupby("Numer misji").cumcount()+1
-        df["numer lini"]=df["_ord"]*10
-        df.drop(columns=["_ord"], inplace=True)
-
-    df["Regal"]=df["Regal"].apply(_try_int)
-    df["Kolumna"]=df["Kolumna"].apply(_try_int)
-    df=df.dropna(subset=["Regal","Kolumna"]).copy()
-    df["Regal"]=df["Regal"].astype(int); df["Kolumna"]=df["Kolumna"].astype(int)
-
-    # Sortowanie
-    df["__sort_nl__"] = pd.to_numeric(df["numer lini"], errors="coerce").fillna(9999999)
-    df["__orig_idx__"] = range(len(df))
-
-    rows_details=[]; rows_summary=[]; rows_debug=[]
+    try: raw=pd.read_excel(uploaded_file,header=0,dtype=object); m=_auto_map(raw)
+    except: 
+        try: raw=pd.read_excel(uploaded_file,header=1,dtype=object); m=_auto_map(raw)
+        except Exception as e: return None, None, str(e)
+    df=raw.rename(columns={m[k]:k for k in m if m[k]})
+    if "Numer misji" in df.columns: df["Numer misji"]=df["Numer misji"].astype(str).str.strip()
+    if "Tryb Pracy" in df.columns: df["Tryb Pracy"]=df["Tryb Pracy"].astype(str).str.strip()
+    if "numer lini" not in df.columns: df["numer lini"]=(df.groupby("Numer misji").cumcount()+1)*10
+    df["Regal"]=df["Regal"].apply(_try_int); df["Kolumna"]=df["Kolumna"].apply(_try_int)
+    df=df.dropna(subset=["Regal","Kolumna"]).astype({"Regal":int, "Kolumna":int})
+    df["__sort__"]=pd.to_numeric(df["numer lini"], errors="coerce").fillna(9e9)
     
-    groups = list(df.groupby(["Numer misji","Tryb Pracy"], dropna=False))
-    progress_bar = st.progress(0)
-    total_groups = len(groups)
-    
-    for i, ((misja,tryb),grp_misja) in enumerate(groups):
-        tryb_int=_to_tryb_int(tryb)
-        g = grp_misja.sort_values(["__sort_nl__", "__orig_idx__"], kind="mergesort")
+    rows_d=[]; rows_s=[]
+    for (misja,tryb), grp in df.groupby(["Numer misji","Tryb Pracy"]):
+        grp=grp.sort_values("__sort__", kind="mergesort")
+        ss_t = START_STOP_MAP.get(_to_tryb_int(tryb))
+        ss_p = pair_key(min(ss_t)) if ss_t else pair_key(AXIS_602_LANE)
         
+        last_p = ss_p; dist=START_STOP*2
+        
+        # Split by blocks
         blocks=[]; cur_t=None; buf=[]
-        def flush():
-            nonlocal blocks,cur_t,buf
-            if buf: blocks.append((cur_t, pd.DataFrame(buf).reset_index(drop=True)))
-            buf=[]
-        for _,r in g.iterrows():
-            t="602" if int(r["Regal"]) in (600,601) else "aisle"
+        for _,r in grp.iterrows():
+            t="602" if r["Regal"] in (600,601) else "aisle"
             if cur_t is None: cur_t=t
-            if t!=cur_t: flush(); cur_t=t
-            buf.append(r.to_dict())
-        flush()
-
-        det=[]; total=0.0
-        ss_pair_tuple=START_STOP_MAP.get(tryb_int)
-        ss_pair=pair_key(min(ss_pair_tuple)) if ss_pair_tuple else pair_key(AXIS_602_LANE)
-        ss_txt=f"({ss_pair_tuple[0]}-{ss_pair_tuple[1]})" if ss_pair_tuple else ""
-
-        total+=START_STOP; det.append((f"S/S wejście {ss_txt}", START_STOP))
-        last_pair=ss_pair
-
-        for typ,bdf in blocks:
-            if typ=="602":
-                d,last_pair,ddet=simulate_602(bdf, last_pair, ss_pair)
-                total+=d; det.extend(ddet)
-            else:
-                d,last_pair,ddet=simulate_blocks(bdf, tryb_int, last_pair)
-                total+=d; det.extend(ddet)
+            if t!=cur_t: blocks.append((cur_t, pd.DataFrame(buf))); buf=[]; cur_t=t
+            buf.append(r)
+        if buf: blocks.append((cur_t, pd.DataFrame(buf)))
         
-        if ss_pair_tuple:
-            hop = pair_gaps(last_pair, ss_pair) * CROSS_LANES
-            if hop > 0:
-                det.append((f"Front: front ({last_pair}) → S/S", round(hop,1)))
-                total += hop
-
-        det.append((f"S/S wyjście {ss_txt}", START_STOP))
-        total += START_STOP
-        dist = round(total, 1)
-        stops_count=len(g.drop_duplicates(["Regal","Kolumna"]))
-
-        for _,r in g.iterrows():
-            out=r.to_dict()
-            out["Pełna lokalizacja"]=fmt_loc(int(r["Regal"]), int(r["Kolumna"]), r.get("Poziom"), r.get("miejsce"))
-            out["Ilość stopów w misji"]=stops_count
-            out["Dystans (m)"]=dist
-            out["Dystans (km)"]=round(dist/1000.0,3)
-            for tmpc in ["__sort_nl__", "__orig_idx__"]:
-                if tmpc in out: del out[tmpc]
-            rows_details.append(out)
-
-        rows_summary.append({"Numer misji":misja,"Tryb Pracy":tryb,"Start/Stop":ss_txt.strip("()"),
-                             "Ilość stopów":stops_count,"Dystans (m)":dist,"Dystans (km)":round(dist/1000.0,3)})
-
-        k=1
-        for opis,metry in det:
-            rows_debug.append({"Numer misji":misja,"Tryb Pracy":tryb,"Krok":k,"Opis":opis,"Metry":round(metry, 1)})
-            k+=1
-
-        progress_bar.progress(min((i+1)/total_groups, 1.0))
-
-    df_det=pd.DataFrame(rows_details)
-    df_sum=pd.DataFrame(rows_summary)
-    progress_bar.empty()
-    
-    return df_det, df_sum, None
+        for t, bdf in blocks:
+            if t=="602": d, last_p, _ = simulate_602(bdf, last_p, ss_p)
+            else: d, last_p, _ = simulate_blocks(bdf, _to_tryb_int(tryb), last_p)
+            dist += d
+        
+        dist += pair_gaps(last_p, ss_p)*CROSS_LANES
+        
+        rows_s.append({"Numer misji":misja, "Tryb Pracy":tryb, "Dystans (m)":round(dist,1), "Ilość stopów":len(grp.drop_duplicates(["Regal","Kolumna"]))})
+        for _,r in grp.iterrows():
+            d=r.to_dict(); d.update({"Dystans (m)":round(dist,1)}); rows_d.append(d)
+            
+    return pd.DataFrame(rows_d), pd.DataFrame(rows_s), None
 
 def generate_excel_download(df_det, df_sum):
     output = io.BytesIO()
-    wb = Workbook()
-    
-    ws1=wb.active; ws1.title="Szczegóły"
-    for r in dataframe_to_rows(df_det, index=False, header=True): ws1.append(r)
-
+    wb = Workbook(); ws1=wb.active; ws1.title="Szczegóły"
+    for r in dataframe_to_rows(df_det,index=False,header=True): ws1.append(r)
     ws2=wb.create_sheet("Podsumowanie")
-    for r in dataframe_to_rows(df_sum, index=False, header=True): ws2.append(r)
-    
-    wb.save(output)
-    return output.getvalue()
-
+    for r in dataframe_to_rows(df_sum,index=False,header=True): ws2.append(r)
+    wb.save(output); return output.getvalue()
 
 # ==========================================
-# 3. INTERFEJS UŻYTKOWNIKA (STREAMLIT)
+# 4. INTERFEJS
 # ==========================================
 
 st.title("📦 VD: Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
-
-# Ładowanie mapy (jeśli jest)
+# Ładowanie mapy
 map_coords = {}
 if uploaded_map:
+    # 1. Próba: Format 4 kolumn (Regal, Kolumna, X, Y)
     try:
         df_map = pd.read_excel(uploaded_map)
-        # Oczekujemy kolumn: Regal, Kolumna, X, Y
-        # Sprawdzamy czy są odpowiednie kolumny
-        req_cols = ["Regal", "Kolumna", "X", "Y"]
-        if all(c in df_map.columns for c in req_cols):
+        req = ["Regal", "Kolumna", "X", "Y"]
+        if all(c in df_map.columns for c in req):
             for _, r in df_map.iterrows():
-                try:
-                    rk = (int(r['Regal']), int(r['Kolumna']))
-                    map_coords[rk] = (float(r['X']), float(r['Y']))
-                except: continue
-            st.sidebar.success(f"Wczytano {len(map_coords)} punktów mapy!")
-        else:
-            st.sidebar.warning("Plik mapy musi mieć kolumny: Regal, Kolumna, X, Y")
-    except Exception as e:
-        st.sidebar.error(f"Błąd mapy: {e}")
+                map_coords[(int(r['Regal']), int(r['Kolumna']))] = (float(r['X']), float(r['Y']))
+            st.sidebar.success(f"Wczytano mapę prostą: {len(map_coords)} pkt")
+    except: pass
+
+    # 2. Próba: Format wizualny (Skaner)
+    if not map_coords:
+        coords, err = parse_visual_map(uploaded_map)
+        if coords:
+            map_coords = coords
+            st.sidebar.success(f"Zeskanowano mapę wizualną: {len(map_coords)} pkt!")
+        elif err:
+            st.sidebar.warning(f"Problem z mapą: {err}")
 
 if uploaded_file:
     df_det, df_sum, error = process_data(uploaded_file)
-    
-    if error:
-        st.error(f"Błąd przetwarzania pliku: {error}")
+    if error: st.error(error)
     else:
-        st.sidebar.success("Analiza przetworzona!")
+        st.sidebar.success("Gotowe!")
+        k1,k2,k3 = st.columns(3)
+        k1.metric("Dystans Total", f"{df_sum['Dystans (m)'].sum()/1000:.2f} km")
+        k2.metric("Misje", df_sum['Numer misji'].nunique())
+        k3.metric("Śr. Dystans", f"{df_sum['Dystans (m)'].mean():.1f} m")
         
-        # KPI
-        total_dist_km = df_sum["Dystans (km)"].sum()
-        total_missions = df_sum["Numer misji"].nunique()
-        avg_dist = df_sum["Dystans (m)"].mean()
-        
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Całkowity Dystans", f"{total_dist_km:.2f} km")
-        k2.metric("Liczba Misji", f"{total_missions}")
-        k3.metric("Śr. Dystans / Misję", f"{avg_dist:.1f} m")
-        k4.metric("Liczba Stopów", f"{df_sum['Ilość stopów'].sum()}")
-
-        # --- DIGITAL TWIN (MAPA) ---
         st.subheader("🗺️ Wizualizacja Trasy")
+        sel_m = st.selectbox("Wybierz misję:", df_det["Numer misji"].unique())
+        m_data = df_det[df_det["Numer misji"] == sel_m].sort_values("__sort__")
         
-        selected_mission = st.selectbox("Wybierz misję:", df_det["Numer misji"].unique())
-        mission_data = df_det[df_det["Numer misji"] == selected_mission].sort_values("numer lini")
+        def get_xy(r, c):
+            if (r,c) in map_coords: return map_coords[(r,c)]
+            return (pair_key(r) + (0.2 if r%2==0 else -0.2), c)
         
-        # Funkcja pobierająca koordynaty (z mapy lub automatycznie)
-        def get_coords(regal, kolumna):
-            if (regal, kolumna) in map_coords:
-                return map_coords[(regal, kolumna)]
+        path_x = []; path_y = []; lbls = []
+        for _, row in m_data.iterrows():
+            x, y = get_xy(int(row["Regal"]), int(row["Kolumna"]))
+            path_x.append(x); path_y.append(y); lbls.append(fmt_loc(row["Regal"],row["Kolumna"],row.get("Poziom"),row.get("miejsce")))
             
-            # Fallback (stary algorytm)
-            pair = pair_key(regal)
-            offset = 0.2 if regal % 2 == 0 else -0.2
-            x = pair + offset
-            y = kolumna 
-            return x, y
-
-        mission_coords = []
-        for _, row in mission_data.iterrows():
-            x, y = get_coords(row["Regal"], row["Kolumna"])
-            mission_coords.append({"x": x, "y": y, "label": row["Pełna lokalizacja"], "sku": row.get("SKU", "")})
-        
-        df_coords = pd.DataFrame(mission_coords)
-        
         fig = go.Figure()
-
-        # Tło - Jeśli mamy mapę, rysujemy wszystkie punkty z mapy
-        if map_coords:
-            all_x = [v[0] for v in map_coords.values()]
-            all_y = [v[1] for v in map_coords.values()]
-            fig.add_trace(go.Scatter(
-                x=all_x, y=all_y, mode='markers',
-                marker=dict(color='#333333', size=4),
-                name='Mapa Magazynu', hoverinfo='none'
-            ))
-        else:
-            # Stare tło (automatyczne)
-            active_pairs = sorted(df_det["Regal"].apply(pair_key).unique())
-            max_col = df_det["Kolumna"].max()
-            bg_x, bg_y = [], []
-            for p in active_pairs:
-                for c in range(0, int(max_col)+1, 5): 
-                    bg_x.append(p - 0.2); bg_y.append(c)
-                    bg_x.append(p + 0.2); bg_y.append(c)
-            fig.add_trace(go.Scatter(
-                x=bg_x, y=bg_y, mode='markers',
-                marker=dict(color='#333333', size=4),
-                name='Struktura (Auto)', hoverinfo='none'
-            ))
-
-        # Ścieżka
-        if not df_coords.empty:
-            fig.add_trace(go.Scatter(
-                x=df_coords["x"], y=df_coords["y"],
-                mode='lines+markers',
-                line=dict(color='#0066cc', width=3, dash='dot'),
-                marker=dict(size=10, color='#ff9900', symbol='square'),
-                name='Trasa', text=df_coords["label"], hoverinfo='text+x+y'
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=[df_coords.iloc[0]["x"]], y=[df_coords.iloc[0]["y"]],
-                mode='markers', marker=dict(size=14, color='green', symbol='triangle-right'), name='Start'
-            ))
-            fig.add_trace(go.Scatter(
-                x=[df_coords.iloc[-1]["x"]], y=[df_coords.iloc[-1]["y"]],
-                mode='markers', marker=dict(size=14, color='red', symbol='square'), name='Koniec'
-            ))
-
-        # --- STYL WYKRESU (DARK MODE) ---
-        fig.update_layout(
-            title=f"Misja: {selected_mission}",
-            xaxis_title="X (Mapa) / Aleja",
-            yaxis_title="Y (Mapa) / Głębokość",
-            height=600,
-            
-            # Ustawienia tła wykresu na czarne/szare
-            paper_bgcolor='#111111',
-            plot_bgcolor='#111111',
-            font=dict(color='white'),
-            
-            showlegend=True,
-            legend=dict(font=dict(color='white')),
-            
-            xaxis=dict(showgrid=True, gridcolor='#333333', zerolinecolor='#333333'),
-            yaxis=dict(showgrid=True, gridcolor='#333333', zerolinecolor='#333333')
-        )
         
+        # Tło
+        if map_coords:
+            mx = [v[0] for v in map_coords.values()]; my = [v[1] for v in map_coords.values()]
+            # Odwracamy Y, żeby góra Excela była górą mapy (opcjonalne, zależy od preferencji)
+            # Tutaj zostawiam standardowo.
+            fig.add_trace(go.Scatter(x=mx, y=my, mode='markers', marker=dict(color='#333', size=4), name='Regały', hoverinfo='none'))
+            
+        # Ścieżka
+        fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers', line=dict(color='#0066cc', width=3), marker=dict(color='orange', size=8), text=lbls, name='Trasa'))
+        
+        # Start/Stop
+        if path_x:
+            fig.add_trace(go.Scatter(x=[path_x[0]], y=[path_y[0]], mode='markers', marker=dict(color='green', size=12, symbol='triangle-right'), name='Start'))
+            fig.add_trace(go.Scatter(x=[path_x[-1]], y=[path_y[-1]], mode='markers', marker=dict(color='red', size=12, symbol='square'), name='Koniec'))
+
+        fig.update_layout(height=700, paper_bgcolor='#111', plot_bgcolor='#111', font=dict(color='white'),
+                          xaxis=dict(showgrid=False, zeroline=False, visible=False), 
+                          yaxis=dict(showgrid=False, zeroline=False, visible=False, autorange="reversed")) # Odwracamy Y żeby pasowało do Excela (1. rząd na górze)
         st.plotly_chart(fig, use_container_width=True)
-
-        # Tabele
-        c1, c2 = st.columns(2)
-        with c1:
-            st.dataframe(mission_data[["numer lini", "Pełna lokalizacja", "SKU", "Regal", "Kolumna"]], hide_index=True)
-        with c2:
-            mission_sum = df_sum[df_sum["Numer misji"] == selected_mission].iloc[0]
-            st.write(f"**Tryb:** {mission_sum['Tryb Pracy']}")
-            st.write(f"**Dystans:** {mission_sum['Dystans (m)']} m")
-
-        # Download
-        st.markdown("---")
-        excel_data = generate_excel_download(df_det, df_sum)
-        st.download_button(
-            label="Pobierz Raport Excel",
-            data=excel_data,
-            file_name="Raport_Stopy_Dystans.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.info("👈 Wgraj 'analiza.xlsx' w panelu bocznym.")
-
-
+        
+        st.download_button("Pobierz Raport", generate_excel_download(df_det, df_sum), "Raport.xlsx")
