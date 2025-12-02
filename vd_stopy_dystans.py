@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ==========================================
-# 0. KONFIGURACJA
+# 0. KONFIGURACJA (MUSI BYĆ PIERWSZA)
 # ==========================================
 
 st.set_page_config(
@@ -24,7 +24,7 @@ st.set_page_config(
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 8  # Sekundy
+CZAS_TRWANIA_INTRA = 5  # Sekundy
 
 def get_base64_video(video_path):
     try:
@@ -34,56 +34,73 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS (NAPRAWA CENTROWANIA I MENU) ---
+# --- CSS (POPRAWKI: MENU I CENTROWANIE) ---
 st.markdown("""
 <style>
-    /* Tło i kolory */
-    .stApp { background-color: #000000; color: #ffffff; }
+    /* 1. GŁÓWNE KOLORY */
+    .stApp {
+        background-color: #000000;
+        color: #ffffff;
+    }
     
-    /* Pasek boczny */
-    [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
+    /* 2. PASEK BOCZNY */
+    section[data-testid="stSidebar"] {
+        background-color: #050505;
+        border-right: 1px solid #333;
+    }
     
-    /* Teksty */
-    h1, h2, h3, h4, h5, h6, p, label, span, div { color: #ffffff !important; }
+    /* 3. PRZYWRÓCENIE PRZYCISKU MENU (SIDEBAR TOGGLE) */
+    /* Nie ukrywamy header'a całkowicie, żeby przycisk działał */
+    header[data-testid="stHeader"] {
+        background-color: transparent;
+        z-index: 1000; /* Żeby był na wierzchu */
+    }
     
-    /* Metryki */
-    div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
+    /* Ukrywamy tylko kolorowy pasek dekoracyjny, ale zostawiamy przyciski */
+    header[data-testid="stHeader"] > .decoration {
+        display: none;
+    }
 
-    /* --- INTRO FIX: MATEMATYCZNY ŚRODEK --- */
+    /* Kolor przycisku otwierania menu (jeśli jest niewidoczny) */
+    button[kind="header"] {
+        color: white !important;
+    }
+
+    /* 4. TEKSTY I METRYKI */
+    h1, h2, h3, h4, h5, h6, p, label, span, div {
+        color: #ffffff !important;
+    }
+    div.stMetric {
+        background-color: #111111 !important;
+        border: 1px solid #333 !important;
+    }
+
+    /* 5. INTRO - IDEALNE CENTROWANIE (FLEXBOX) */
     #intro-overlay {
         position: fixed;
-        /* Ustawiamy środek kontenera na środku ekranu */
-        top: 50%;
-        left: 50%;
-        /* Przesuwamy go w tył o połowę jego rozmiaru, żeby wycentrować */
-        transform: translate(-50%, -50%);
-        
-        width: 120vw; /* Nieco szerzej niż ekran, żeby na pewno zakryć marginesy */
-        height: 120vh;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
         background-color: black;
-        z-index: 999999999;
+        z-index: 999999; /* Musi przykryć wszystko */
         
-        /* Flexbox do wyśrodkowania wideo wewnątrz czarnego tła */
+        /* To jest klucz do centrowania: */
         display: flex;
-        justify_content: center;
-        align-items: center;
+        justify_content: center; /* Poziomo */
+        align-items: center;     /* Pionowo */
     }
     
     #intro-video-element {
+        /* Zachowuje oryginalny rozmiar, chyba że ekran jest mniejszy */
         width: auto;
         height: auto;
-        max-width: 60%;  /* Maksymalna szerokość wideo */
+        max-width: 90vw;
+        max-height: 90vh;
+        
         display: block;
-    }
-    
-    /* PRZYWRACAMY MENU (HAMBURGER) */
-    header[data-testid="stHeader"] {
-        background-color: transparent;
-        visibility: visible !important; /* Ważne: przywraca widoczność */
-    }
-    /* Ukrywamy tylko kolorowy pasek dekoracyjny na górze, jeśli przeszkadza */
-    header[data-testid="stHeader"] > div:first-child {
-        display: none;
+        border: none;
+        outline: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -97,6 +114,7 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
+        # muted jest konieczne dla autoplay w większości przeglądarek
         intro_html = f"""
         <div id="intro-overlay">
             <video id="intro-video-element" autoplay loop muted playsinline>
@@ -333,7 +351,7 @@ def generate_excel_download(df_det, df_sum):
 # 4. INTERFEJS
 # ==========================================
 
-st.title("📦 VD: Analiza Stopy i Dystans")
+st.title("📦 Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
 map_coords = {}
