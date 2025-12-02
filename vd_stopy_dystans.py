@@ -19,12 +19,12 @@ st.set_page_config(
     page_title="VD Stopy Dystans", 
     layout="wide", 
     page_icon="📦",
-    initial_sidebar_state="expanded" # Pasek boczny otwarty na starcie
+    initial_sidebar_state="collapsed" # Zmienilem na collapsed, zeby nie przeszkadzal na starcie
 )
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 5  # Sekundy
+CZAS_TRWANIA_INTRA = 5
 
 def get_base64_video(video_path):
     try:
@@ -34,54 +34,48 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS (POPRAWKI) ---
+# --- CSS (NAPRAWA CENTROWANIA I MAPY) ---
 st.markdown("""
 <style>
-    /* GŁÓWNE KOLORY */
-    .stApp {
-        background-color: #000000;
-        color: #ffffff;
-    }
+    /* Tło aplikacji */
+    .stApp { background-color: #000000; color: #ffffff; }
     
-    /* PASEK BOCZNY (SIDEBAR) */
-    section[data-testid="stSidebar"] {
-        background-color: #050505;
-        border-right: 1px solid #333;
-    }
+    /* Ukrycie paska nagłówka */
+    header { visibility: hidden; }
     
-    /* TEKSTY */
-    h1, h2, h3, h4, h5, h6, p, label, span, div {
-        color: #ffffff !important;
-    }
+    /* Pasek boczny */
+    [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
     
-    /* METRYKI */
-    div.stMetric {
-        background-color: #111111 !important;
-        border: 1px solid #333 !important;
-    }
+    /* Teksty */
+    h1, h2, h3, h4, h5, h6, p, label, span, div { color: #ffffff !important; }
+    
+    /* Metryki */
+    div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
 
-    /* --- INTRO: PRZYKRYWA WSZYSTKO (IDEALNY ŚRODEK) --- */
+    /* --- INTRO FULLSCREEN FIX (AGRESYWNE CENTROWANIE) --- */
     #intro-overlay {
         position: fixed;
         top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
+        left: 0 !important; /* Ignoruj sidebar */
+        width: 100vw !important; /* Cała szerokość okna */
+        height: 100vh !important;
         background-color: black;
-        /* Bardzo wysoki indeks, żeby przykryć sidebar i header */
-        z-index: 9999999; 
+        z-index: 999999999;
         display: flex;
         justify_content: center;
         align-items: center;
+        margin: 0;
+        padding: 0;
     }
     
     #intro-video-element {
-        /* Oryginalny rozmiar, ale nie większy niż ekran */
-        width: auto;
-        height: auto;
         max-width: 80%;
         max-height: 80%;
+        width: auto;  /* Zachowaj proporcje */
+        height: auto; /* Zachowaj proporcje */
         display: block;
+        border: none;
+        outline: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -95,9 +89,6 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
-        # Kod HTML Intro
-        # Używamy 'muted', żeby wideo się ruszało (autoplay).
-        # Bez 'muted' przeglądarka zablokuje wideo i będzie statyczny obrazek.
         intro_html = f"""
         <div id="intro-overlay">
             <video id="intro-video-element" autoplay loop muted playsinline>
@@ -111,9 +102,8 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
         st.session_state['intro_played'] = True
 
 # ==========================================
-# 1. FUNKCJA SKANUJĄCA MAPĘ
+# 1. FUNKCJA SKANUJĄCA MAPĘ (WIZUALNA)
 # ==========================================
-
 def parse_visual_map(uploaded_file):
     wb = load_workbook(uploaded_file, data_only=True)
     ws = wb.active
@@ -149,9 +139,8 @@ def parse_visual_map(uploaded_file):
     return coords, None
 
 # ==========================================
-# 2. SIDEBAR (PASEK BOCZNY)
+# 2. SIDEBAR
 # ==========================================
-
 with st.sidebar:
     if os.path.exists(PLIK_WIDEO):
         video_b64 = get_base64_video(PLIK_WIDEO)
@@ -172,7 +161,6 @@ with st.sidebar:
 # ==========================================
 # 3. LOGIKA BIZNESOWA
 # ==========================================
-
 FRONT, P034, P057, P058 = "front", "034", "057", "058"
 A_FRONT_TO_034, B_034_TO_057, C_058_TO_062 = 72.5, 66.0, 11.7
 CROSS_LANES, START_STOP = 5.4, 9.0
@@ -337,12 +325,12 @@ def generate_excel_download(df_det, df_sum):
 # 4. INTERFEJS
 # ==========================================
 
-st.title("📦 Analiza Stopy i Dystans")
+st.title("📦  Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
 map_coords = {}
 if uploaded_map:
-    # 1. Prosty format (4 kolumny)
+    # 1. Prosty format
     try:
         df_map = pd.read_excel(uploaded_map)
         if all(c in df_map.columns for c in ["Regal", "Kolumna", "X", "Y"]):
@@ -373,10 +361,16 @@ if uploaded_file:
         sel_m = st.selectbox("Wybierz misję:", df_det["Numer misji"].unique())
         m_data = df_det[df_det["Numer misji"] == sel_m].sort_values("__sort__")
         
+        # --- AUTOMATYCZNE GENEROWANIE TŁA (JEŚLI BRAK MAPY) ---
+        # 1. Obliczamy zakres regałów i kolumn z pliku analizy
+        all_racks = df_det["Regal"].unique()
+        all_cols = df_det["Kolumna"].unique()
+        
         def get_xy(r, c):
             if (r,c) in map_coords: return map_coords[(r,c)]
-            # Fallback dla braku mapy
-            return (pair_key(r)*5, c*1.2)
+            # Fallback dla braku mapy:
+            # Rozciągamy X (regały) i Y (kolumny)
+            return (pair_key(r)*10, c*2) 
         
         path_x = []; path_y = []; lbls = []
         for _, row in m_data.iterrows():
@@ -385,10 +379,25 @@ if uploaded_file:
             
         fig = go.Figure()
         
+        # TŁO: Jeśli wgrana mapa -> punkty z mapy
+        #      Jeśli BRAK mapy -> generujemy siatkę na podstawie danych
+        bg_x, bg_y = [], []
         if map_coords:
-            mx = [v[0] for v in map_coords.values()]
-            my = [v[1] for v in map_coords.values()]
-            fig.add_trace(go.Scatter(x=mx, y=my, mode='markers', marker=dict(color='#333', size=6), name='Regały', hoverinfo='none'))
+            bg_x = [v[0] for v in map_coords.values()]
+            bg_y = [v[1] for v in map_coords.values()]
+        else:
+            # Generujemy "duchy" wszystkich możliwych miejsc z pliku analizy
+            # Żeby wykres nie był pusty
+            min_r, max_r = df_det["Regal"].min(), df_det["Regal"].max()
+            max_c = df_det["Kolumna"].max()
+            for r in range(min_r, max_r+1, 2): # Co drugi regał
+                for c in range(0, int(max_c)+5, 5): # Co 5 kolumn
+                    x, y = get_xy(r, c)
+                    bg_x.append(x); bg_y.append(y)
+                    x2, y2 = get_xy(r+1, c) # Sąsiedni regał
+                    bg_x.append(x2); bg_y.append(y2)
+
+        fig.add_trace(go.Scatter(x=bg_x, y=bg_y, mode='markers', marker=dict(color='#333', size=4), name='Struktura', hoverinfo='none'))
             
         fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers', line=dict(color='#0066cc', width=3), marker=dict(color='orange', size=10), text=lbls, name='Trasa'))
         
@@ -399,8 +408,9 @@ if uploaded_file:
         fig.update_layout(
             height=700,
             paper_bgcolor='#111', plot_bgcolor='#111', font=dict(color='white'),
-            xaxis=dict(showgrid=False, zeroline=False, visible=False), 
-            yaxis=dict(showgrid=False, zeroline=False, visible=False, autorange="reversed", scaleanchor="x", scaleratio=1)
+            # Pokaż siatkę (grid), żeby nie było pusto
+            xaxis=dict(showgrid=True, gridcolor='#333', zeroline=False), 
+            yaxis=dict(showgrid=True, gridcolor='#333', zeroline=False, autorange="reversed", scaleanchor="x", scaleratio=1)
         )
         st.plotly_chart(fig, use_container_width=True)
         st.download_button("Pobierz Raport", generate_excel_download(df_det, df_sum), "Raport.xlsx")
