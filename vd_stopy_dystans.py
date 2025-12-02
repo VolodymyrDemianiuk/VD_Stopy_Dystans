@@ -4,12 +4,145 @@ import numpy as np
 import plotly.graph_objects as go
 import re
 import io
+import os
+import time
+import base64
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.chart import BarChart, Reference
 
 # ==========================================
-# 1. LOGIKA BIZNESOWA (SKRYPT VD - ZAADAPTOWANY)
+# 0. KONFIGURACJA + INTRO + CSS
+# ==========================================
+
+st.set_page_config(
+    page_title="VD Stopy Dystans", 
+    layout="wide", 
+    page_icon="📦",
+    initial_sidebar_state="expanded"
+)
+
+# Funkcja do wczytania wideo jako base64 (potrzebne do HTML)
+def get_base64_video(video_path):
+    with open(video_path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+# --- CSS: CZARNY MOTYW ---
+st.markdown("""
+<style>
+    /* Główne tło aplikacji */
+    .stApp {
+        background-color: #000000;
+        color: #ffffff;
+    }
+    
+    /* Panel boczny (Sidebar) */
+    [data-testid="stSidebar"] {
+        background-color: #050505; /* Bardzo ciemny szary, prawie czarny */
+        border-right: 1px solid #333;
+    }
+
+    /* Nagłówki */
+    h1, h2, h3, h4, h5, h6 {
+        color: #ffffff !important;
+    }
+
+    /* Teksty */
+    p, label, .stMarkdown {
+        color: #e0e0e0 !important;
+    }
+
+    /* Karty (Metryki) */
+    div.stMetric {
+        background-color: #111111 !important;
+        border: 1px solid #333 !important;
+        color: white !important;
+    }
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+        color: white !important;
+    }
+
+    /* Tabele (Dataframe) */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #333;
+    }
+
+    /* Ukrycie domyślnego paska na górze */
+    header {visibility: hidden;}
+    
+    /* Intro Container - Pełny ekran */
+    #intro-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: black;
+        z-index: 99999;
+        display: flex;
+        justify_content: center;
+        align-items: center;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- LOGIKA INTRO (Tylko raz przy uruchomieniu) ---
+logo_path = "logo.mp4"
+
+if 'intro_played' not in st.session_state:
+    st.session_state['intro_played'] = False
+
+if not st.session_state['intro_played'] and os.path.exists(logo_path):
+    # Kontener na intro
+    intro_placeholder = st.empty()
+    
+    # Konwersja wideo do base64
+    video_b64 = get_base64_video(logo_path)
+    
+    # Wyświetlamy wideo na pełnym ekranie
+    intro_html = f"""
+    <div id="intro-container">
+        <video autoplay muted playsinline style="width: 60%; max-width: 800px;">
+            <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+        </video>
+    </div>
+    """
+    intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
+    
+    # Czekamy na koniec animacji (ok. 3.5 sekundy - dostosuj jeśli trzeba)
+    time.sleep(3.5)
+    
+    # Usuwamy intro
+    intro_placeholder.empty()
+    st.session_state['intro_played'] = True
+
+
+# ==========================================
+# 1. SIDEBAR (LOGO + UPLOAD)
+# ==========================================
+
+with st.sidebar:
+    # Wyświetlanie Logo (Małe, zapętlone, bez dźwięku, bez kontrolek)
+    if os.path.exists(logo_path):
+        video_b64 = get_base64_video(logo_path)
+        logo_html = f"""
+        <div style="text-align: center; margin-bottom: 20px;">
+            <video autoplay loop muted playsinline style="width: 150px; border-radius: 10px;">
+                <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
+            </video>
+        </div>
+        """
+        st.markdown(logo_html, unsafe_allow_html=True)
+    else:
+        st.warning("Wgraj plik 'logo.mp4' do folderu aplikacji")
+
+    st.header("📂 Dane wejściowe")
+    uploaded_file = st.file_uploader("1. Wgraj analizę (analiza.xlsx)", type=["xlsx"])
+    uploaded_map = st.file_uploader("2. Wgraj mapę magazynu (opcjonalne)", type=["xlsx"])
+
+
+# ==========================================
+# 2. LOGIKA BIZNESOWA (SKRYPT VD)
 # ==========================================
 
 # --- STAŁE ---
@@ -342,10 +475,6 @@ def simulate_602(grp_602: pd.DataFrame, last_pair:int, ss_pair:int):
 
 @st.cache_data
 def process_data(uploaded_file):
-    """
-    Funkcja przyjmuje plik, wykonuje logikę ze skryptu i zwraca struktury danych
-    gotowe do wyświetlenia w Streamlit i pobrania jako Excel.
-    """
     try:
         raw = pd.read_excel(uploaded_file, header=0, dtype=object)
         mapping = _auto_map(raw)
@@ -377,10 +506,7 @@ def process_data(uploaded_file):
 
     rows_details=[]; rows_summary=[]; rows_debug=[]
     
-    # Grupowanie i obliczanie
     groups = list(df.groupby(["Numer misji","Tryb Pracy"], dropna=False))
-    
-    # Progress bar w Streamlit
     progress_bar = st.progress(0)
     total_groups = len(groups)
     
@@ -388,7 +514,6 @@ def process_data(uploaded_file):
         tryb_int=_to_tryb_int(tryb)
         g = grp_misja.sort_values(["__sort_nl__", "__orig_idx__"], kind="mergesort")
         
-        # Podział na bloki 602 / aisle
         blocks=[]; cur_t=None; buf=[]
         def flush():
             nonlocal blocks,cur_t,buf
@@ -428,7 +553,6 @@ def process_data(uploaded_file):
         dist = round(total, 1)
         stops_count=len(g.drop_duplicates(["Regal","Kolumna"]))
 
-        # Zapis wyników
         for _,r in g.iterrows():
             out=r.to_dict()
             out["Pełna lokalizacja"]=fmt_loc(int(r["Regal"]), int(r["Kolumna"]), r.get("Poziom"), r.get("miejsce"))
@@ -470,27 +594,32 @@ def generate_excel_download(df_det, df_sum):
 
 
 # ==========================================
-# 3. INTERFEJS UŻYTKOWNIKA (STREAMLIT + PLOTLY)
+# 3. INTERFEJS UŻYTKOWNIKA (STREAMLIT)
 # ==========================================
-
-st.set_page_config(page_title="VD Stopy Dystans", layout="wide", page_icon="📦")
-
-# Stylizacja CSS (Nowoczesna)
-st.markdown("""
-<style>
-    .main {background-color: #f8f9fa;}
-    .block-container {padding-top: 2rem;}
-    h1 {color: #2c3e50;}
-    div.stMetric {background-color: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);}
-</style>
-""", unsafe_allow_html=True)
 
 st.title("📦 VD: Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
-# --- SIDEBAR (Upload) ---
-st.sidebar.header("📂 Dane wejściowe")
-uploaded_file = st.sidebar.file_uploader("Wgraj plik Excel (analiza.xlsx)", type=["xlsx"])
+
+# Ładowanie mapy (jeśli jest)
+map_coords = {}
+if uploaded_map:
+    try:
+        df_map = pd.read_excel(uploaded_map)
+        # Oczekujemy kolumn: Regal, Kolumna, X, Y
+        # Sprawdzamy czy są odpowiednie kolumny
+        req_cols = ["Regal", "Kolumna", "X", "Y"]
+        if all(c in df_map.columns for c in req_cols):
+            for _, r in df_map.iterrows():
+                try:
+                    rk = (int(r['Regal']), int(r['Kolumna']))
+                    map_coords[rk] = (float(r['X']), float(r['Y']))
+                except: continue
+            st.sidebar.success(f"Wczytano {len(map_coords)} punktów mapy!")
+        else:
+            st.sidebar.warning("Plik mapy musi mieć kolumny: Regal, Kolumna, X, Y")
+    except Exception as e:
+        st.sidebar.error(f"Błąd mapy: {e}")
 
 if uploaded_file:
     df_det, df_sum, error = process_data(uploaded_file)
@@ -498,10 +627,9 @@ if uploaded_file:
     if error:
         st.error(f"Błąd przetwarzania pliku: {error}")
     else:
-        # --- DASHBOARD GŁÓWNY ---
-        st.sidebar.success("Plik przetworzony pomyślnie!")
+        st.sidebar.success("Analiza przetworzona!")
         
-        # KPI Top Level
+        # KPI
         total_dist_km = df_sum["Dystans (km)"].sum()
         total_missions = df_sum["Numer misji"].nunique()
         avg_dist = df_sum["Dystans (m)"].mean()
@@ -512,26 +640,24 @@ if uploaded_file:
         k3.metric("Śr. Dystans / Misję", f"{avg_dist:.1f} m")
         k4.metric("Liczba Stopów", f"{df_sum['Ilość stopów'].sum()}")
 
-        # --- SEKCJA DIGITAL TWIN (MAPA) ---
-        st.subheader("🗺️ Wizualizacja Trasy (VD Viewer)")
+        # --- DIGITAL TWIN (MAPA) ---
+        st.subheader("🗺️ Wizualizacja Trasy")
         
-        # Wybór misji do podglądu
-        selected_mission = st.selectbox("Wybierz misję do wizualizacji:", df_det["Numer misji"].unique())
-        
-        # Filtrowanie danych dla wybranej misji
+        selected_mission = st.selectbox("Wybierz misję:", df_det["Numer misji"].unique())
         mission_data = df_det[df_det["Numer misji"] == selected_mission].sort_values("numer lini")
         
-        # --- TWORZENIE MAPY W PLOTLY ---
-        
+        # Funkcja pobierająca koordynaty (z mapy lub automatycznie)
         def get_coords(regal, kolumna):
-            """ Zamienia Regal/Kolumna na X/Y do wykresu """
+            if (regal, kolumna) in map_coords:
+                return map_coords[(regal, kolumna)]
+            
+            # Fallback (stary algorytm)
             pair = pair_key(regal)
             offset = 0.2 if regal % 2 == 0 else -0.2
             x = pair + offset
             y = kolumna 
             return x, y
 
-        # Generowanie punktów dla wybranej misji
         mission_coords = []
         for _, row in mission_data.iterrows():
             x, y = get_coords(row["Regal"], row["Kolumna"])
@@ -541,91 +667,87 @@ if uploaded_file:
         
         fig = go.Figure()
 
-        # Tło (Szkielet magazynu)
-        max_pair = df_det["Regal"].apply(pair_key).max()
-        max_col = df_det["Kolumna"].max()
-        
-        bg_x = []
-        bg_y = []
-        active_pairs = sorted(df_det["Regal"].apply(pair_key).unique())
-        for p in active_pairs:
-            for c in range(0, int(max_col)+1, 5): 
-                bg_x.append(p - 0.2); bg_y.append(c)
-                bg_x.append(p + 0.2); bg_y.append(c)
-                
-        fig.add_trace(go.Scatter(
-            x=bg_x, y=bg_y, mode='markers',
-            marker=dict(color='#e0e0e0', size=4),
-            name='Struktura Magazynu', hoverinfo='none'
-        ))
+        # Tło - Jeśli mamy mapę, rysujemy wszystkie punkty z mapy
+        if map_coords:
+            all_x = [v[0] for v in map_coords.values()]
+            all_y = [v[1] for v in map_coords.values()]
+            fig.add_trace(go.Scatter(
+                x=all_x, y=all_y, mode='markers',
+                marker=dict(color='#333333', size=4),
+                name='Mapa Magazynu', hoverinfo='none'
+            ))
+        else:
+            # Stare tło (automatyczne)
+            active_pairs = sorted(df_det["Regal"].apply(pair_key).unique())
+            max_col = df_det["Kolumna"].max()
+            bg_x, bg_y = [], []
+            for p in active_pairs:
+                for c in range(0, int(max_col)+1, 5): 
+                    bg_x.append(p - 0.2); bg_y.append(c)
+                    bg_x.append(p + 0.2); bg_y.append(c)
+            fig.add_trace(go.Scatter(
+                x=bg_x, y=bg_y, mode='markers',
+                marker=dict(color='#333333', size=4),
+                name='Struktura (Auto)', hoverinfo='none'
+            ))
 
-        # Ścieżka (Linia łącząca punkty)
+        # Ścieżka
         if not df_coords.empty:
             fig.add_trace(go.Scatter(
                 x=df_coords["x"], y=df_coords["y"],
                 mode='lines+markers',
                 line=dict(color='#0066cc', width=3, dash='dot'),
                 marker=dict(size=10, color='#ff9900', symbol='square'),
-                name='Trasa Zbiórki',
-                text=df_coords["label"],
-                hoverinfo='text+x+y'
+                name='Trasa', text=df_coords["label"], hoverinfo='text+x+y'
             ))
             
-            # Start (zmieniono symbol na triangle-right)
             fig.add_trace(go.Scatter(
                 x=[df_coords.iloc[0]["x"]], y=[df_coords.iloc[0]["y"]],
                 mode='markers', marker=dict(size=14, color='green', symbol='triangle-right'), name='Start'
             ))
-            # Koniec (zmieniono symbol na square)
             fig.add_trace(go.Scatter(
                 x=[df_coords.iloc[-1]["x"]], y=[df_coords.iloc[-1]["y"]],
                 mode='markers', marker=dict(size=14, color='red', symbol='square'), name='Koniec'
             ))
 
+        # --- STYL WYKRESU (DARK MODE) ---
         fig.update_layout(
-            title=f"Wizualizacja Misji: {selected_mission}",
-            xaxis_title="Numer Alei (Pary Regałów)",
-            yaxis_title="Kolumna (Głębokość)",
+            title=f"Misja: {selected_mission}",
+            xaxis_title="X (Mapa) / Aleja",
+            yaxis_title="Y (Mapa) / Głębokość",
             height=600,
-            plot_bgcolor='white',
+            
+            # Ustawienia tła wykresu na czarne/szare
+            paper_bgcolor='#111111',
+            plot_bgcolor='#111111',
+            font=dict(color='white'),
+            
             showlegend=True,
-            xaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
-            yaxis=dict(showgrid=True, gridcolor='#f0f0f0')
+            legend=dict(font=dict(color='white')),
+            
+            xaxis=dict(showgrid=True, gridcolor='#333333', zerolinecolor='#333333'),
+            yaxis=dict(showgrid=True, gridcolor='#333333', zerolinecolor='#333333')
         )
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- TABELE SZCZEGÓŁOWE ---
+        # Tabele
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📋 Szczegóły Misji")
             st.dataframe(mission_data[["numer lini", "Pełna lokalizacja", "SKU", "Regal", "Kolumna"]], hide_index=True)
-        
         with c2:
-            st.subheader("📊 Statystyki Misji")
             mission_sum = df_sum[df_sum["Numer misji"] == selected_mission].iloc[0]
             st.write(f"**Tryb:** {mission_sum['Tryb Pracy']}")
             st.write(f"**Dystans:** {mission_sum['Dystans (m)']} m")
-            st.write(f"**Liczba stopów:** {mission_sum['Ilość stopów']}")
 
-        # --- DOWNLOAD ---
+        # Download
         st.markdown("---")
-        st.header("📥 Pobierz Raport")
         excel_data = generate_excel_download(df_det, df_sum)
         st.download_button(
-            label="Pobierz Raport Excel (VD Stopy Dystans)",
+            label="Pobierz Raport Excel",
             data=excel_data,
             file_name="Raport_Stopy_Dystans.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
 else:
-    # Ekran startowy
-    st.info("👈 Wgraj plik 'analiza.xlsx' w panelu bocznym.")
-    st.markdown("""
-    ### VD Stopy Dystans - Instrukcja
-    1. Aplikacja wczytuje Twój plik z danymi.
-    2. Przelicza trasy zgodnie z algorytmem (strefy A/B/C, 602, kary).
-    3. Wizualizuje trasę na mapie 2D.
-    4. Pozwala pobrać gotowy raport w formacie Excel.
-    """)
+    st.info("👈 Wgraj 'analiza.xlsx' w panelu bocznym.")
