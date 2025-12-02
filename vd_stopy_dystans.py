@@ -19,12 +19,12 @@ st.set_page_config(
     page_title="VD Stopy Dystans", 
     layout="wide", 
     page_icon="📦",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded" # Pasek boczny otwarty na starcie
 )
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 8  # Sekundy
+CZAS_TRWANIA_INTRA = 5  # Sekundy
 
 def get_base64_video(video_path):
     try:
@@ -34,26 +34,33 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS (HARDCORE FIX DLA CENTROWANIA) ---
+# --- CSS (POPRAWKI) ---
 st.markdown("""
 <style>
-    /* Reset tła */
-    .stApp { background-color: #000000; color: #ffffff; }
+    /* GŁÓWNE KOLORY */
+    .stApp {
+        background-color: #000000;
+        color: #ffffff;
+    }
     
-    /* Ukrycie nagłówka Streamlit */
-    header { visibility: hidden; }
+    /* PASEK BOCZNY (SIDEBAR) */
+    section[data-testid="stSidebar"] {
+        background-color: #050505;
+        border-right: 1px solid #333;
+    }
     
-    /* Styl Sidebar */
-    [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
+    /* TEKSTY */
+    h1, h2, h3, h4, h5, h6, p, label, span, div {
+        color: #ffffff !important;
+    }
     
-    /* Teksty */
-    h1, h2, h3, h4, h5, h6, p, label, span, div { color: #ffffff !important; }
-    
-    /* Metryki */
-    div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
+    /* METRYKI */
+    div.stMetric {
+        background-color: #111111 !important;
+        border: 1px solid #333 !important;
+    }
 
-    /* --- INTRO FULLSCREEN FIX --- */
-    /* Używamy position fixed i transformacji, aby idealnie wyśrodkować */
+    /* --- INTRO: PRZYKRYWA WSZYSTKO (IDEALNY ŚRODEK) --- */
     #intro-overlay {
         position: fixed;
         top: 0;
@@ -61,21 +68,20 @@ st.markdown("""
         width: 100vw;
         height: 100vh;
         background-color: black;
-        z-index: 999999;
+        /* Bardzo wysoki indeks, żeby przykryć sidebar i header */
+        z-index: 9999999; 
         display: flex;
         justify_content: center;
         align-items: center;
-        overflow: hidden;
     }
     
-    /* Styl samego wideo */
     #intro-video-element {
-        width: 60%;        /* Szerokość wideo względem ekranu */
-        max-width: 800px;  /* Maksymalna szerokość */
+        /* Oryginalny rozmiar, ale nie większy niż ekran */
+        width: auto;
         height: auto;
+        max-width: 80%;
+        max-height: 80%;
         display: block;
-        border: none;
-        outline: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,9 +95,9 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
-        # CZYSTY HTML5 - BEZ JAVASCRIPT
-        # Używamy 'muted', żeby przeglądarka pozwoliła na autoplay.
-        # Bez 'muted' wideo by stało w miejscu.
+        # Kod HTML Intro
+        # Używamy 'muted', żeby wideo się ruszało (autoplay).
+        # Bez 'muted' przeglądarka zablokuje wideo i będzie statyczny obrazek.
         intro_html = f"""
         <div id="intro-overlay">
             <video id="intro-video-element" autoplay loop muted playsinline>
@@ -143,7 +149,7 @@ def parse_visual_map(uploaded_file):
     return coords, None
 
 # ==========================================
-# 2. SIDEBAR
+# 2. SIDEBAR (PASEK BOCZNY)
 # ==========================================
 
 with st.sidebar:
