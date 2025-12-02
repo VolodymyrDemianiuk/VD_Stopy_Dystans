@@ -24,7 +24,7 @@ st.set_page_config(
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 5  # Czas trwania intro w sekundach (dostosuj do długości wideo)
+CZAS_TRWANIA_INTRA = 8  # Sekundy
 
 def get_base64_video(video_path):
     try:
@@ -34,14 +34,16 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS (POPRAWIONY ROZMIAR I CENTROWANIE) ---
+# --- CSS (HARDCORE FIX DLA CENTROWANIA) ---
 st.markdown("""
 <style>
-    /* Resetujemy style Streamlit */
+    /* Reset tła */
     .stApp { background-color: #000000; color: #ffffff; }
+    
+    /* Ukrycie nagłówka Streamlit */
     header { visibility: hidden; }
     
-    /* Sidebar */
+    /* Styl Sidebar */
     [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
     
     /* Teksty */
@@ -51,6 +53,7 @@ st.markdown("""
     div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
 
     /* --- INTRO FULLSCREEN FIX --- */
+    /* Używamy position fixed i transformacji, aby idealnie wyśrodkować */
     #intro-overlay {
         position: fixed;
         top: 0;
@@ -58,34 +61,26 @@ st.markdown("""
         width: 100vw;
         height: 100vh;
         background-color: black;
-        z-index: 99999999;
+        z-index: 999999;
         display: flex;
-        justify_content: center; /* Wyśrodkowanie poziome */
-        align-items: center;     /* Wyśrodkowanie pionowe */
-        margin: 0;
-        padding: 0;
+        justify_content: center;
+        align-items: center;
+        overflow: hidden;
     }
     
-    #intro-video {
-        /* TO ZAPEWNIA ORYGINALNY ROZMIAR (NIE POWIĘKSZA) */
-        width: auto;
+    /* Styl samego wideo */
+    #intro-video-element {
+        width: 60%;        /* Szerokość wideo względem ekranu */
+        max-width: 800px;  /* Maksymalna szerokość */
         height: auto;
-        
-        /* Ale pilnuje, żeby nie wyszło poza ekran, jeśli wideo jest ogromne */
-        max-width: 100%;
-        max-height: 100%;
-        
         display: block;
-        outline: none;
         border: none;
+        outline: none;
     }
-    
-    /* Ukrywamy suwaki podczas intra */
-    body { overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- LOGIKA INTRO (WIDEO + DŹWIĘK) ---
+# --- LOGIKA INTRO ---
 if 'intro_played' not in st.session_state:
     st.session_state['intro_played'] = False
 
@@ -94,43 +89,19 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
-        # Kod HTML: Usunąłem 'muted', zostawiłem autoplay.
-        # Video ma ID "intro-video", które w CSS ma ustawiony oryginalny rozmiar.
+        # CZYSTY HTML5 - BEZ JAVASCRIPT
+        # Używamy 'muted', żeby przeglądarka pozwoliła na autoplay.
+        # Bez 'muted' wideo by stało w miejscu.
         intro_html = f"""
         <div id="intro-overlay">
-            <video id="intro-video" autoplay loop playsinline>
+            <video id="intro-video-element" autoplay loop muted playsinline>
                 <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
             </video>
-            
-            <script>
-                var vid = document.getElementById("intro-video");
-                
-                // Próba wymuszenia głośności na max
-                vid.volume = 1.0; 
-                
-                // Próba odtworzenia
-                var promise = vid.play();
-                
-                if (promise !== undefined) {{
-                    promise.then(_ => {{
-                        // Udało się uruchomić z dźwiękiem
-                    }}).catch(error => {{
-                        // Przeglądarka zablokowała dźwięk -> włączamy wyciszenie, żeby chociaż obraz leciał
-                        console.log("Autoplay z dźwiękiem zablokowany przez przeglądarkę.");
-                        vid.muted = true;
-                        vid.play();
-                    }});
-                }}
-            </script>
         </div>
         """
         intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
         time.sleep(CZAS_TRWANIA_INTRA)
         intro_placeholder.empty()
-        
-        # Przywracamy przewijanie strony
-        st.markdown("<style>body { overflow: auto; }</style>", unsafe_allow_html=True)
-        
         st.session_state['intro_played'] = True
 
 # ==========================================
