@@ -24,7 +24,7 @@ st.set_page_config(
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 5  # Czas trwania w sekundach
+CZAS_TRWANIA_INTRA = 5  # Czas trwania intro w sekundach (dostosuj do długości wideo)
 
 def get_base64_video(video_path):
     try:
@@ -34,10 +34,10 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS (HARDCORE FIX) ---
+# --- CSS (POPRAWIONY ROZMIAR I CENTROWANIE) ---
 st.markdown("""
 <style>
-    /* Resetujemy style Streamlit, żeby intro było na wierzchu */
+    /* Resetujemy style Streamlit */
     .stApp { background-color: #000000; color: #ffffff; }
     header { visibility: hidden; }
     
@@ -58,19 +58,23 @@ st.markdown("""
         width: 100vw;
         height: 100vh;
         background-color: black;
-        z-index: 99999999; /* Maksymalny priorytet */
+        z-index: 99999999;
         display: flex;
-        flex-direction: column;
-        justify_content: center;
-        align-items: center;
+        justify_content: center; /* Wyśrodkowanie poziome */
+        align-items: center;     /* Wyśrodkowanie pionowe */
         margin: 0;
         padding: 0;
     }
     
     #intro-video {
-        width: 50%;       /* Szerokość wideo */
-        max-width: 700px;
+        /* TO ZAPEWNIA ORYGINALNY ROZMIAR (NIE POWIĘKSZA) */
+        width: auto;
         height: auto;
+        
+        /* Ale pilnuje, żeby nie wyszło poza ekran, jeśli wideo jest ogromne */
+        max-width: 100%;
+        max-height: 100%;
+        
         display: block;
         outline: none;
         border: none;
@@ -81,7 +85,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- LOGIKA INTRO ---
+# --- LOGIKA INTRO (WIDEO + DŹWIĘK) ---
 if 'intro_played' not in st.session_state:
     st.session_state['intro_played'] = False
 
@@ -90,26 +94,29 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
-        # Kod HTML z wymuszonym odtwarzaniem
-        # Dodajemy 'muted' jako fallback, ale JS spróbuje to odmutować
+        # Kod HTML: Usunąłem 'muted', zostawiłem autoplay.
+        # Video ma ID "intro-video", które w CSS ma ustawiony oryginalny rozmiar.
         intro_html = f"""
         <div id="intro-overlay">
-            <video id="my-video" autoplay loop playsinline muted>
+            <video id="intro-video" autoplay loop playsinline>
                 <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
             </video>
+            
             <script>
-                var vid = document.getElementById("my-video");
+                var vid = document.getElementById("intro-video");
                 
-                // Próba odtworzenia z dźwiękiem
+                // Próba wymuszenia głośności na max
+                vid.volume = 1.0; 
+                
+                // Próba odtworzenia
                 var promise = vid.play();
                 
                 if (promise !== undefined) {{
                     promise.then(_ => {{
-                        // Autoplay started!
-                        vid.muted = false; // Próbujemy włączyć dźwięk
+                        // Udało się uruchomić z dźwiękiem
                     }}).catch(error => {{
-                        // Autoplay was prevented.
-                        // Wideo musi być wyciszone, żeby ruszyło
+                        // Przeglądarka zablokowała dźwięk -> włączamy wyciszenie, żeby chociaż obraz leciał
+                        console.log("Autoplay z dźwiękiem zablokowany przez przeglądarkę.");
                         vid.muted = true;
                         vid.play();
                     }});
@@ -121,7 +128,7 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
         time.sleep(CZAS_TRWANIA_INTRA)
         intro_placeholder.empty()
         
-        # Przywracamy przewijanie strony po intro
+        # Przywracamy przewijanie strony
         st.markdown("<style>body { overflow: auto; }</style>", unsafe_allow_html=True)
         
         st.session_state['intro_played'] = True
