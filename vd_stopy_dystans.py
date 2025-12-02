@@ -24,7 +24,7 @@ st.set_page_config(
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
 # Ile sekund ma trwać intro? (Np. jeśli film ma 3s, a chcesz 3 powtórzenia, wpisz 9 lub 10)
-CZAS_TRWANIA_INTRA = 9 
+CZAS_TRWANIA_INTRA = 5 
 
 # Funkcja do wczytania wideo jako base64
 def get_base64_video(video_path):
@@ -744,4 +744,5 @@ if uploaded_file:
         )
 else:
     st.info("👈 Wgraj 'analiza.xlsx' w panelu bocznym.")
+
 
