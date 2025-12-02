@@ -16,7 +16,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # ==========================================
 
 st.set_page_config(
-    page_title="VD Stopy Dystans", 
+    page_title="Stopy&Dystans", 
     layout="wide", 
     page_icon="📦",
     initial_sidebar_state="expanded"
@@ -70,69 +70,42 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
 # ==========================================
 
 def parse_visual_map(uploaded_file):
-    """
-    Skanuje plik Excel jako siatkę wizualną.
-    Szuka numerów regałów w nagłówkach i parsuje komórki (np. 007.00.C -> kolumna 7).
-    Zwraca słownik: {(regal, kolumna): (x, y)}
-    """
     wb = load_workbook(uploaded_file, data_only=True)
     ws = wb.active
-    
     coords = {}
     
-    # 1. Znajdź rząd z numerami regałów (szukamy liczb > 100 w pierwszych 5 rzędach)
     header_row_idx = None
-    rack_cols = {} # {col_index: rack_number}
+    rack_cols = {} 
     
     for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=5, values_only=True), start=1):
         found_racks = 0
         for c_idx, val in enumerate(row, start=1):
-            # Sprawdzamy czy to liczba i czy wygląda na regał (np. > 100)
             if isinstance(val, (int, float)) and val > 100:
                 found_racks += 1
-        
-        if found_racks > 2: # Jeśli znaleziono więcej niż 2 regały w rzędzie, to jest to nagłówek
+        if found_racks > 2:
             header_row_idx = r_idx
-            # Zapiszmy mapowanie: która kolumna Excela to jaki Regał
             for c_idx, val in enumerate(row, start=1):
                 if isinstance(val, (int, float)):
                     rack_cols[c_idx] = int(val)
             break
             
     if not header_row_idx:
-        return None, "Nie znaleziono rzędu z numerami regałów (szukałem liczb > 100 w pierwszych 5 wierszach)."
+        return None, "Nie znaleziono rzędu z numerami regałów (szukałem liczb > 100)."
 
-    # 2. Skanuj komórki pod nagłówkiem
-    # X = numer kolumny w Excelu
-    # Y = numer wiersza w Excelu (odwrócony, żeby 0 było na dole, albo normalny)
-    # Przyjmijmy Y = numer wiersza, a na wykresie to odwrócimy.
-    
-    count_points = 0
-    
-    # Iterujemy po wszystkich wierszach poniżej nagłówka
     for row in ws.iter_rows(min_row=header_row_idx+1, values_only=False):
         for cell in row:
-            if cell.column in rack_cols: # Jeśli jesteśmy w kolumnie należącej do regału
+            if cell.column in rack_cols:
                 val = cell.value
                 if val and isinstance(val, str):
-                    # Próba wyciągnięcia numeru kolumny z formatu "007.00.C" lub podobnych
-                    # Szukamy pierwszej grupy cyfr
                     match = re.search(r'^(\d+)', str(val).strip())
                     if match:
                         try:
                             col_num = int(match.group(1))
                             rack_num = rack_cols[cell.column]
-                            
-                            # X to po prostu indeks kolumny w Excelu (dzięki temu zachowamy odstępy/alejki)
                             x = cell.column
-                            # Y to indeks wiersza
                             y = cell.row
-                            
                             coords[(rack_num, col_num)] = (x, y)
-                            count_points += 1
-                        except:
-                            pass
-                            
+                        except: pass
     return coords, None
 
 
@@ -161,13 +134,48 @@ with st.sidebar:
 # 3. LOGIKA BIZNESOWA (SKRYPT VD)
 # ==========================================
 
-# --- STAŁE I FUNKCJE POMOCNICZE (SKRÓCONE DLA CZYTELNOŚCI - BEZ ZMIAN W LOGICE) ---
-A_FRONT_TO_034 = 72.5; B_034_TO_057 = 66.0; C_058_TO_062 = 11.7; CROSS_LANES = 5.4; START_STOP = 9.0
-START_STOP_MAP = {602:(826,825), 601:(826,825), 610:(826,825), 722:(826,825), 622:(826,825), 620:(826,825), 630:(859,860), 640:(859,860), 641:(859,860), 650:(859,860), 655:(859,860), 660:(859,860), 670:(1020,1019), 680:(1020,1019), 690:(1020,1019)}
-AXIS_602_LANE = 800; SS_TO_AXIS_602 = 70.2; LENGTH_602_LOOP = 146.0
-NEEDED = {"Numer misji":["Numer misji","numer misji"], "Tryb Pracy":["Tryb Pracy"], "SKU":["SKU"], "numer lini":["numer lini"], "Regal":["Regal"], "Kolumna":["Kolumna"], "Poziom":["Poziom"], "miejsce":["miejsce"]}
-TRYBY_EXT_ALL = {680, 690}; TRYB_670_EXT = {1022,1023,1024,1025,1026}
+# --- NAPRAWIONE STAŁE (TU BYŁ BŁĄD) ---
+FRONT = "front"
+P034  = "034"
+P057  = "057"
+P058  = "058"
 
+A_FRONT_TO_034 = 72.5     
+B_034_TO_057   = 66.0     
+C_058_TO_062   = 11.7     
+CROSS_LANES    = 5.4      
+START_STOP     = 9.0      
+WRONG_ENTRY_PENALTY = 100000.0 
+ENTRY_SIDE_SOFT_PENALTY = 0.0
+U_TURN_PENALTY = 200.0         
+NEIGHBOR_MIDDLE_PENALTY = 1.0 
+BRIDGE_PENALTY = 0.0
+
+TRYBY_EXT_ALL = {680, 690}
+TRYB_670_EXT  = {1022,1023,1024,1025,1026}
+
+START_STOP_MAP = {
+    602:(826,825), 601:(826,825), 610:(826,825),
+    722:(826,825), 622:(826,825), 620:(826,825),
+    630:(859,860), 640:(859,860), 641:(859,860),
+    650:(859,860), 655:(859,860), 660:(859,860),
+    670:(1020,1019), 680:(1020,1019), 690:(1020,1019),
+}
+AXIS_602_LANE   = 800
+SS_TO_AXIS_602  = 70.2     
+LENGTH_602_LOOP = 146.0    
+NEEDED = {
+ "Numer misji":["Numer misji","numer misji","misja","nr misji","id misji"],
+ "Tryb Pracy":["Tryb Pracy","tryb pracy","tryb"],
+ "SKU":["SKU","sku"],
+ "numer lini":["numer lini","numer linii","linia","line"],
+ "Regal":["Regal","Regał","regał","alejka","regal"],
+ "Kolumna":["Kolumna","kolumna","kol"],
+ "Poziom":["Poziom","poziom","level"],
+ "miejsce":["miejsce","slot","miejsce pobrania"],
+}
+
+# --- FUNKCJE POMOCNICZE ---
 def tryb_ma_rozszerzenie(tryb, lane): return tryb in TRYBY_EXT_ALL or (tryb == 670 and lane in TRYB_670_EXT)
 def pair_key(reg): return int(reg) if int(reg) % 2 == 1 else int(reg) - 1
 def normalize_rack(reg_num): return reg_num - 20 if reg_num >= 901 else reg_num
@@ -185,11 +193,13 @@ def fmt_loc(reg,col,poziom,miejsce):
     elif pd.notna(poziom): p=str(int(poziom)).zfill(2)
     m=str(miejsce).strip() if pd.notna(miejsce) else "C"
     return f"{int(reg)}.{k}{p}{m}"
+
 def get_m(state, nC, ext):
     if state==0: return 0.0
     if state==2: return A_FRONT_TO_034
     if nC and ext: return A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062
     return A_FRONT_TO_034 + B_034_TO_057
+
 def _lane_distance(entry, exit, nA, nB, nC, ext):
     s = 0.0 if entry==FRONT else (A_FRONT_TO_034 if entry==P034 else A_FRONT_TO_034+B_034_TO_057)
     t = 0.0 if exit==FRONT else (A_FRONT_TO_034 if exit==P034 else A_FRONT_TO_034+B_034_TO_057)
