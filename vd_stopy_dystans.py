@@ -11,23 +11,28 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ==========================================
-# 0. KONFIGURACJA + INTRO + CSS
+# 0. KONFIGURACJA
 # ==========================================
 
 st.set_page_config(
     page_title="VD Stopy Dystans", 
     layout="wide", 
     page_icon="📦",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded"  # <--- WYMUSZENIE OTWARCIA PANELU BOCZNEGO
 )
 
-# Funkcja do wczytania wideo jako base64 (potrzebne do HTML)
+# --- USTAWIENIA INTRA ---
+PLIK_WIDEO = "logo.mp4"
+# Ile sekund ma trwać intro? (Np. jeśli film ma 3s, a chcesz 3 powtórzenia, wpisz 9 lub 10)
+CZAS_TRWANIA_INTRA = 10 
+
+# Funkcja do wczytania wideo jako base64
 def get_base64_video(video_path):
     with open(video_path, "rb") as f:
         data = f.read()
     return base64.b64encode(data).decode()
 
-# --- CSS: CZARNY MOTYW ---
+# --- CSS: CZARNY MOTYW I POPRAWKI ---
 st.markdown("""
 <style>
     /* Główne tło aplikacji */
@@ -36,41 +41,24 @@ st.markdown("""
         color: #ffffff;
     }
     
-    /* Panel boczny (Sidebar) */
+    /* Panel boczny */
     [data-testid="stSidebar"] {
-        background-color: #050505; /* Bardzo ciemny szary, prawie czarny */
+        background-color: #050505;
         border-right: 1px solid #333;
     }
 
-    /* Nagłówki */
-    h1, h2, h3, h4, h5, h6 {
+    /* Nagłówki i teksty */
+    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, div {
         color: #ffffff !important;
-    }
-
-    /* Teksty */
-    p, label, .stMarkdown {
-        color: #e0e0e0 !important;
     }
 
     /* Karty (Metryki) */
     div.stMetric {
         background-color: #111111 !important;
         border: 1px solid #333 !important;
-        color: white !important;
-    }
-    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
-        color: white !important;
     }
 
-    /* Tabele (Dataframe) */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #333;
-    }
-
-    /* Ukrycie domyślnego paska na górze */
-    header {visibility: hidden;}
-    
-    /* Intro Container - Pełny ekran */
+    /* Intro Container - Idealne wyśrodkowanie */
     #intro-container {
         position: fixed;
         top: 0;
@@ -78,39 +66,42 @@ st.markdown("""
         width: 100vw;
         height: 100vh;
         background-color: black;
-        z-index: 99999;
+        z-index: 999999; /* Bardzo wysoki indeks, żeby przykryć wszystko */
         display: flex;
         justify_content: center;
         align-items: center;
+        flex-direction: column;
+    }
+    
+    /* Ukrywamy standardowy nagłówek Streamlit, ALE zostawiamy miejsce na hamburger menu */
+    header[data-testid="stHeader"] {
+        background-color: transparent;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- LOGIKA INTRO (Tylko raz przy uruchomieniu) ---
-logo_path = "logo.mp4"
+# --- LOGIKA INTRO (PEŁNY EKRAN + DŹWIĘK) ---
 
 if 'intro_played' not in st.session_state:
     st.session_state['intro_played'] = False
 
-if not st.session_state['intro_played'] and os.path.exists(logo_path):
-    # Kontener na intro
+if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     intro_placeholder = st.empty()
+    video_b64 = get_base64_video(PLIK_WIDEO)
     
-    # Konwersja wideo do base64
-    video_b64 = get_base64_video(logo_path)
-    
-    # Wyświetlamy wideo na pełnym ekranie
+    # HTML wideo: autoplay, loop, BEZ muted (dźwięk włączony)
+    # Uwaga: Przeglądarki mogą zablokować dźwięk przy autoplay.
     intro_html = f"""
     <div id="intro-container">
-        <video autoplay muted playsinline style="width: 60%; max-width: 800px;">
+        <video autoplay loop playsinline style="width: 50%; max-width: 600px;">
             <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
         </video>
     </div>
     """
     intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
     
-    # Czekamy na koniec animacji (ok. 3.5 sekundy - dostosuj jeśli trzeba)
-    time.sleep(3.5)
+    # Czekamy tyle sekund, ile ustawiliśmy na górze
+    time.sleep(CZAS_TRWANIA_INTRA)
     
     # Usuwamy intro
     intro_placeholder.empty()
@@ -118,24 +109,26 @@ if not st.session_state['intro_played'] and os.path.exists(logo_path):
 
 
 # ==========================================
-# 1. SIDEBAR (LOGO + UPLOAD)
+# 1. SIDEBAR (PANEL BOCZNY)
 # ==========================================
 
 with st.sidebar:
-    # Wyświetlanie Logo (Małe, zapętlone, bez dźwięku, bez kontrolek)
-    if os.path.exists(logo_path):
-        video_b64 = get_base64_video(logo_path)
+    # --- MAŁE LOGO (BEZ DŹWIĘKU, PĘTLA) ---
+    if os.path.exists(PLIK_WIDEO):
+        video_b64 = get_base64_video(PLIK_WIDEO)
+        # Tutaj dajemy 'muted', żeby małe logo nie hałasowało
         logo_html = f"""
-        <div style="text-align: center; margin-bottom: 20px;">
-            <video autoplay loop muted playsinline style="width: 150px; border-radius: 10px;">
+        <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+            <video autoplay loop muted playsinline style="width: 120px; border-radius: 8px;">
                 <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
             </video>
         </div>
         """
         st.markdown(logo_html, unsafe_allow_html=True)
     else:
-        st.warning("Wgraj plik 'logo.mp4' do folderu aplikacji")
+        st.warning("⚠️ Brak pliku 'logo.mp4'")
 
+    st.markdown("---")
     st.header("📂 Dane wejściowe")
     uploaded_file = st.file_uploader("1. Wgraj analizę (analiza.xlsx)", type=["xlsx"])
     uploaded_map = st.file_uploader("2. Wgraj mapę magazynu (opcjonalne)", type=["xlsx"])
