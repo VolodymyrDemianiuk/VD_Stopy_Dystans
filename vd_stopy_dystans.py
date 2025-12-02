@@ -24,7 +24,7 @@ st.set_page_config(
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 10 
+CZAS_TRWANIA_INTRA = 5 
 
 def get_base64_video(video_path):
     with open(video_path, "rb") as f:
@@ -54,7 +54,7 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     intro_html = f"""
     <div id="intro-container">
-        <video autoplay loop playsinline style="width: 50%; max-width: 600px;">
+        <video autoplay loop playsinline style="width: 30%; max-width: 600px;">
             <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
         </video>
     </div>
@@ -362,7 +362,7 @@ def generate_excel_download(df_det, df_sum):
 # 4. INTERFEJS
 # ==========================================
 
-st.title("📦 VD: Analiza Stopy i Dystans")
+st.title("📦 Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
 # Ładowanie mapy
@@ -433,3 +433,4 @@ if uploaded_file:
         st.plotly_chart(fig, use_container_width=True)
         
         st.download_button("Pobierz Raport", generate_excel_download(df_det, df_sum), "Raport.xlsx")
+
