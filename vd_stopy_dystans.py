@@ -24,7 +24,7 @@ st.set_page_config(
 
 # --- USTAWIENIA INTRA ---
 PLIK_WIDEO = "logo.mp4"
-CZAS_TRWANIA_INTRA = 5  # Czas w sekundach
+CZAS_TRWANIA_INTRA = 5  # Czas trwania w sekundach
 
 def get_base64_video(video_path):
     try:
@@ -34,11 +34,12 @@ def get_base64_video(video_path):
     except:
         return None
 
-# --- CSS ---
+# --- CSS (HARDCORE FIX) ---
 st.markdown("""
 <style>
-    /* Globalne tło */
+    /* Resetujemy style Streamlit, żeby intro było na wierzchu */
     .stApp { background-color: #000000; color: #ffffff; }
+    header { visibility: hidden; }
     
     /* Sidebar */
     [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #333; }
@@ -48,11 +49,8 @@ st.markdown("""
     
     /* Metryki */
     div.stMetric { background-color: #111111 !important; border: 1px solid #333 !important; }
-    
-    /* Ukrycie paska header (zostawiajac menu) */
-    header[data-testid="stHeader"] { background-color: transparent; }
 
-    /* --- INTRO FIX (IDEALNE CENTROWANIE) --- */
+    /* --- INTRO FULLSCREEN FIX --- */
     #intro-overlay {
         position: fixed;
         top: 0;
@@ -60,17 +58,26 @@ st.markdown("""
         width: 100vw;
         height: 100vh;
         background-color: black;
-        z-index: 9999999;
+        z-index: 99999999; /* Maksymalny priorytet */
         display: flex;
+        flex-direction: column;
         justify_content: center;
         align-items: center;
+        margin: 0;
+        padding: 0;
     }
+    
     #intro-video {
-        width: 60%;
-        max-width: 800px;
+        width: 50%;       /* Szerokość wideo */
+        max-width: 700px;
         height: auto;
         display: block;
+        outline: none;
+        border: none;
     }
+    
+    /* Ukrywamy suwaki podczas intra */
+    body { overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -83,79 +90,79 @@ if not st.session_state['intro_played'] and os.path.exists(PLIK_WIDEO):
     video_b64 = get_base64_video(PLIK_WIDEO)
     
     if video_b64:
-        # UWAGA: 'muted' jest często wymagane przez przeglądarki do autoplay.
-        # Jeśli usuniesz 'muted', wideo może się nie odtworzyć automatycznie w Chrome/Edge.
-        # Dodajemy 'autoplay' i 'playsinline'.
+        # Kod HTML z wymuszonym odtwarzaniem
+        # Dodajemy 'muted' jako fallback, ale JS spróbuje to odmutować
         intro_html = f"""
         <div id="intro-overlay">
-            <video id="intro-video" autoplay loop playsinline>
+            <video id="my-video" autoplay loop playsinline muted>
                 <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
-                Twoja przeglądarka nie obsługuje wideo.
             </video>
+            <script>
+                var vid = document.getElementById("my-video");
+                
+                // Próba odtworzenia z dźwiękiem
+                var promise = vid.play();
+                
+                if (promise !== undefined) {{
+                    promise.then(_ => {{
+                        // Autoplay started!
+                        vid.muted = false; // Próbujemy włączyć dźwięk
+                    }}).catch(error => {{
+                        // Autoplay was prevented.
+                        // Wideo musi być wyciszone, żeby ruszyło
+                        vid.muted = true;
+                        vid.play();
+                    }});
+                }}
+            </script>
         </div>
-        <script>
-            var vid = document.getElementById("intro-video");
-            vid.volume = 1.0; // Próba włączenia dźwięku
-        </script>
         """
         intro_placeholder.markdown(intro_html, unsafe_allow_html=True)
         time.sleep(CZAS_TRWANIA_INTRA)
         intro_placeholder.empty()
+        
+        # Przywracamy przewijanie strony po intro
+        st.markdown("<style>body { overflow: auto; }</style>", unsafe_allow_html=True)
+        
         st.session_state['intro_played'] = True
 
 # ==========================================
-# 1. FUNKCJA SKANUJĄCA MAPĘ WIZUALNĄ
+# 1. FUNKCJA SKANUJĄCA MAPĘ
 # ==========================================
 
 def parse_visual_map(uploaded_file):
     wb = load_workbook(uploaded_file, data_only=True)
     ws = wb.active
     coords = {}
-    
     header_row_idx = None
     rack_cols = {} 
     
-    # 1. Szukamy rzędu z regałami (liczby > 100)
     for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=True), start=1):
         found_racks = 0
         temp_rack_cols = {}
         for c_idx, val in enumerate(row, start=1):
-            # Prosta konwersja na int, jeśli to możliwe
             try:
                 v_int = int(val)
                 if v_int > 100: 
                     found_racks += 1
                     temp_rack_cols[c_idx] = v_int
             except: continue
-            
         if found_racks > 2:
-            header_row_idx = r_idx
-            rack_cols = temp_rack_cols
-            break
+            header_row_idx = r_idx; rack_cols = temp_rack_cols; break
             
-    if not header_row_idx:
-        return None, "Nie znaleziono nagłówka z regałami (szukałem liczb > 100 w pierwszych 10 wierszach)."
+    if not header_row_idx: return None, "Błąd mapy: Nie znaleziono nagłówka z regałami."
 
-    # 2. Skanujemy lokalizacje pod nagłówkiem
     for row in ws.iter_rows(min_row=header_row_idx+1, values_only=False):
         for cell in row:
             if cell.column in rack_cols:
                 val = cell.value
                 if val and isinstance(val, str):
-                    # Szukamy liczby na początku (np. 007 z 007.00.C)
                     match = re.search(r'^(\d+)', str(val).strip())
                     if match:
                         try:
-                            col_num = int(match.group(1))
-                            rack_num = rack_cols[cell.column]
-                            
-                            # WAŻNE: X = numer kolumny, Y = numer wiersza
-                            x = cell.column
-                            y = cell.row
-                            coords[(rack_num, col_num)] = (x, y)
+                            coords[(rack_cols[cell.column], int(match.group(1)))] = (cell.column, cell.row)
                         except: pass
     return coords, None
-
 
 # ==========================================
 # 2. SIDEBAR
@@ -165,26 +172,23 @@ with st.sidebar:
     if os.path.exists(PLIK_WIDEO):
         video_b64 = get_base64_video(PLIK_WIDEO)
         if video_b64:
-            # Małe logo w sidebarze musi być muted, żeby nie hałasowało
-            logo_html = f"""
+            st.markdown(f"""
             <div style="display: flex; justify-content: center; margin-bottom: 20px;">
                 <video autoplay loop muted playsinline style="width: 120px; border-radius: 8px;">
                     <source src="data:video/mp4;base64,{video_b64}" type="video/mp4">
                 </video>
             </div>
-            """
-            st.markdown(logo_html, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
     st.markdown("---")
     st.header("📂 Dane wejściowe")
     uploaded_file = st.file_uploader("1. Wgraj analizę (analiza.xlsx)", type=["xlsx"])
-    uploaded_map = st.file_uploader("2. Wgraj mapę magazynu (wizualną)", type=["xlsx"])
+    uploaded_map = st.file_uploader("2. Wgraj mapę (wizualną)", type=["xlsx"])
 
 # ==========================================
-# 3. LOGIKA BIZNESOWA (SKRYPT VD)
+# 3. LOGIKA BIZNESOWA
 # ==========================================
 
-# Definicje stałych
 FRONT, P034, P057, P058 = "front", "034", "057", "058"
 A_FRONT_TO_034, B_034_TO_057, C_058_TO_062 = 72.5, 66.0, 11.7
 CROSS_LANES, START_STOP = 5.4, 9.0
@@ -193,7 +197,7 @@ NEIGHBOR_MIDDLE_PENALTY, BRIDGE_PENALTY = 1.0, 0.0
 TRYBY_EXT_ALL = {680, 690}; TRYB_670_EXT = {1022,1023,1024,1025,1026}
 START_STOP_MAP = {602:(826,825), 601:(826,825), 610:(826,825), 722:(826,825), 622:(826,825), 620:(826,825), 630:(859,860), 640:(859,860), 641:(859,860), 650:(859,860), 655:(859,860), 660:(859,860), 670:(1020,1019), 680:(1020,1019), 690:(1020,1019)}
 AXIS_602_LANE, SS_TO_AXIS_602, LENGTH_602_LOOP = 800, 70.2, 146.0
-NEEDED = {"Numer misji":["Numer misji","numer misji","misja","nr misji"], "Tryb Pracy":["Tryb Pracy","tryb"], "SKU":["SKU"], "numer lini":["numer lini","linia"], "Regal":["Regal","regał"], "Kolumna":["Kolumna","kol"], "Poziom":["Poziom"], "miejsce":["miejsce"]}
+NEEDED = {"Numer misji":["Numer misji","numer misji"], "Tryb Pracy":["Tryb Pracy"], "SKU":["SKU"], "numer lini":["numer lini"], "Regal":["Regal"], "Kolumna":["Kolumna"], "Poziom":["Poziom"], "miejsce":["miejsce"]}
 
 def tryb_ma_rozszerzenie(tryb, lane): return tryb in TRYBY_EXT_ALL or (tryb == 670 and lane in TRYB_670_EXT)
 def pair_key(reg): return int(reg) if int(reg) % 2 == 1 else int(reg) - 1
@@ -204,7 +208,7 @@ def _try_int(x): m=re.search(r'(-?\d+)',str(x)); return int(m.group(1)) if m and
 def _auto_map(df):
     cols=list(df.columns); low=[str(c).strip().lower() for c in cols]
     m={k: next((cols[i] for i,h in enumerate(low) if any(n.lower() in h for n in v)), None) for k,v in NEEDED.items()}
-    if not m["Regal"] or not m["Kolumna"]: raise ValueError("Brakuje kolumn Regał/Kolumna w pliku analizy")
+    if not m["Regal"] or not m["Kolumna"]: raise ValueError("Brakuje kolumn Regał/Kolumna")
     return m
 def fmt_loc(reg,col,poziom,miejsce):
     k=str(int(col)).zfill(3); p="00"
@@ -212,13 +216,11 @@ def fmt_loc(reg,col,poziom,miejsce):
     elif pd.notna(poziom): p=str(int(poziom)).zfill(2)
     m=str(miejsce).strip() if pd.notna(miejsce) else "C"
     return f"{int(reg)}.{k}{p}{m}"
-
 def get_m(state, nC, ext):
     if state==0: return 0.0
     if state==2: return A_FRONT_TO_034
     if nC and ext: return A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062
     return A_FRONT_TO_034 + B_034_TO_057
-
 def _lane_distance(entry, exit, nA, nB, nC, ext):
     s = 0.0 if entry==FRONT else (A_FRONT_TO_034 if entry==P034 else A_FRONT_TO_034+B_034_TO_057)
     t = 0.0 if exit==FRONT else (A_FRONT_TO_034 if exit==P034 else A_FRONT_TO_034+B_034_TO_057)
@@ -228,7 +230,6 @@ def _lane_distance(entry, exit, nA, nB, nC, ext):
     if nC and ext: req = max(req, A_FRONT_TO_034 + B_034_TO_057 + C_058_TO_062)
     if req==0.0: return abs(t-s)
     return round(req + min(abs(s)+abs(t-req), abs(s-req)+abs(t)), 1)
-
 def calc_aisle_cost_real(state_in, state_out, data):
     cost = 10**9; nA, nB, nC, ext = data['nA'], data['nB'], data['nC'], data['ext']
     anchor_back = (P058 if (ext and nC) else P057)
@@ -239,7 +240,6 @@ def calc_aisle_cost_real(state_in, state_out, data):
     elif (state_in==1 and state_out==2) or (state_in==2 and state_out==1): cost = B_034_TO_057 + (C_058_TO_062 if ext and nC else 0) if not nA else 10**9
     elif state_in==2 and state_out==2: cost = 0.0 if not (nA or nB or nC) else 10**9
     return cost
-
 def simulate_blocks(grp, tryb, start_pair):
     g=grp.copy(); det=[]; total=0.0
     blocks=[]; curp=None; cols=[]
@@ -250,19 +250,15 @@ def simulate_blocks(grp, tryb, start_pair):
         cols.append(c)
     if cols: blocks.append((curp,cols))
     if not blocks: return 0.0, start_pair, []
-
     hop = pair_gaps(start_pair, blocks[0][0]) * CROSS_LANES
     if hop>0: det.append((f"Front: {start_pair} -> {blocks[0][0]}", hop)); total+=hop
-
     info=[]
     for p,cl in blocks:
         ci=[int(c) for c in cl]
         info.append({'p':p, 'nA':any(c<=33 for c in ci), 'nB':any(c>=35 for c in ci), 'nC':any(c>=59 for c in ci), 'ext':tryb_ma_rozszerzenie(tryb,p), 'first_col':ci[0]})
-
     n=len(info); dp=[[10**9]*3 for _ in range(n)]; prev=[[None]*3 for _ in range(n)]
     curr=info[0]
     for i in range(3): dp[0][i] = calc_aisle_cost_real(0, i, curr)
-
     for i in range(n-1):
         for s_out in range(3):
             if dp[i][s_out] >= 10**9: continue
@@ -282,7 +278,6 @@ def simulate_blocks(grp, tryb, start_pair):
                 for s_tgt in range(3):
                     new_cost = dp[i][s_out] + trans + calc_aisle_cost_real(s_in, s_tgt, next_blk)
                     if new_cost < dp[i+1][s_tgt]: dp[i+1][s_tgt] = new_cost; prev[i+1][s_tgt] = (s_out, 0, s_in)
-
     best_end=0; min_val=dp[-1][0]
     for s in range(1,3): 
         if dp[-1][s] < min_val: min_val=dp[-1][s]; best_end=s
@@ -291,7 +286,6 @@ def simulate_blocks(grp, tryb, start_pair):
         p_s, _, in_s = prev[i][curr_s]
         path.append((p_s, 0, in_s, curr_s)); curr_s=p_s
     path.reverse(); path.insert(0, (None,0,0,curr_s))
-
     accum_debug = total
     for i in range(n):
         curr=info[i]; _,_,s_in,s_out=path[i]
@@ -301,15 +295,12 @@ def simulate_blocks(grp, tryb, start_pair):
             gaps = pair_gaps(curr['p'], info[i+1]['p'])
             cross_c = gaps * CROSS_LANES
             accum_debug += cross_c
-
     last = info[-1]; ss_t = START_STOP_MAP.get(tryb); ss_p = pair_key(min(ss_t)) if ss_t else last['p']
     ret_gap = pair_gaps(last['p'], ss_p)
     if ret_gap>0: accum_debug+=ret_gap*CROSS_LANES
     return round(accum_debug,1), ss_p, det
-
 def simulate_602(grp, last_p, ss_p):
-    d = []
-    hop = pair_gaps(last_p, pair_key(AXIS_602_LANE)) * CROSS_LANES
+    d = []; hop = pair_gaps(last_p, pair_key(AXIS_602_LANE)) * CROSS_LANES
     if hop>0: d.append(("Dojazd do 602", hop))
     d.append(("602 Pętla", LENGTH_602_LOOP))
     return round(hop+LENGTH_602_LOOP, 1), pair_key(AXIS_602_LANE), d
@@ -327,7 +318,6 @@ def process_data(uploaded_file):
     df["Regal"]=df["Regal"].apply(_try_int); df["Kolumna"]=df["Kolumna"].apply(_try_int)
     df=df.dropna(subset=["Regal","Kolumna"]).astype({"Regal":int, "Kolumna":int})
     df["__sort__"]=pd.to_numeric(df["numer lini"], errors="coerce").fillna(9e9)
-    
     rows_d=[]; rows_s=[]
     for (misja,tryb), grp in df.groupby(["Numer misji","Tryb Pracy"]):
         grp=grp.sort_values("__sort__", kind="mergesort")
@@ -366,14 +356,12 @@ def generate_excel_download(df_det, df_sum):
 st.title("📦 Analiza Stopy i Dystans")
 st.markdown("**Automatyczna analiza ścieżek kompletacyjnych i wizualizacja tras**")
 
-# Ładowanie mapy
 map_coords = {}
 if uploaded_map:
-    # 1. Format prosty (4 kolumny)
+    # 1. Prosty format (4 kolumny)
     try:
         df_map = pd.read_excel(uploaded_map)
-        req = ["Regal", "Kolumna", "X", "Y"]
-        if all(c in df_map.columns for c in req):
+        if all(c in df_map.columns for c in ["Regal", "Kolumna", "X", "Y"]):
             for _, r in df_map.iterrows(): map_coords[(int(r['Regal']), int(r['Kolumna']))] = (float(r['X']), float(r['Y']))
             st.sidebar.success(f"Wczytano mapę: {len(map_coords)} pkt")
     except: pass
@@ -385,13 +373,13 @@ if uploaded_map:
             map_coords = coords
             st.sidebar.success(f"Zeskanowano mapę: {len(map_coords)} pkt")
         elif err:
-            st.sidebar.warning(f"Map Error: {err}")
+            st.sidebar.warning(f"Błąd mapy: {err}")
 
 if uploaded_file:
     df_det, df_sum, error = process_data(uploaded_file)
     if error: st.error(error)
     else:
-        st.sidebar.success("Analiza gotowa!")
+        st.sidebar.success("Gotowe!")
         k1,k2,k3 = st.columns(3)
         k1.metric("Dystans Total", f"{df_sum['Dystans (m)'].sum()/1000:.2f} km")
         k2.metric("Misje", df_sum['Numer misji'].nunique())
@@ -404,7 +392,7 @@ if uploaded_file:
         def get_xy(r, c):
             if (r,c) in map_coords: return map_coords[(r,c)]
             # Fallback dla braku mapy
-            return (pair_key(r)*5, c*1.2) # Skalowanie dla lepszej widoczności bez mapy
+            return (pair_key(r)*5, c*1.2)
         
         path_x = []; path_y = []; lbls = []
         for _, row in m_data.iterrows():
@@ -413,41 +401,22 @@ if uploaded_file:
             
         fig = go.Figure()
         
-        # Tło (Mapa)
         if map_coords:
             mx = [v[0] for v in map_coords.values()]
             my = [v[1] for v in map_coords.values()]
-            fig.add_trace(go.Scatter(
-                x=mx, y=my, mode='markers',
-                marker=dict(color='#333', size=6), # Większe punkty
-                name='Regały', hoverinfo='none'
-            ))
+            fig.add_trace(go.Scatter(x=mx, y=my, mode='markers', marker=dict(color='#333', size=6), name='Regały', hoverinfo='none'))
             
-        # Trasa
-        fig.add_trace(go.Scatter(
-            x=path_x, y=path_y, mode='lines+markers',
-            line=dict(color='#0066cc', width=3),
-            marker=dict(color='orange', size=10), # Duże punkty trasy
-            text=lbls, name='Trasa'
-        ))
+        fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines+markers', line=dict(color='#0066cc', width=3), marker=dict(color='orange', size=10), text=lbls, name='Trasa'))
         
-        # Start/Stop
         if path_x:
             fig.add_trace(go.Scatter(x=[path_x[0]], y=[path_y[0]], mode='markers', marker=dict(color='green', size=14, symbol='triangle-right'), name='Start'))
             fig.add_trace(go.Scatter(x=[path_x[-1]], y=[path_y[-1]], mode='markers', marker=dict(color='red', size=14, symbol='square'), name='Koniec'))
 
-        # NAPRAWA SKALI I ODWRÓCENIE Y
         fig.update_layout(
             height=700,
             paper_bgcolor='#111', plot_bgcolor='#111', font=dict(color='white'),
             xaxis=dict(showgrid=False, zeroline=False, visible=False), 
-            yaxis=dict(
-                showgrid=False, zeroline=False, visible=False, 
-                autorange="reversed", # Bo w Excelu wiersz 1 jest na górze
-                scaleanchor="x",      # <--- TO NAPRAWIA PROPORCJE (KWADRATY)
-                scaleratio=1
-            )
+            yaxis=dict(showgrid=False, zeroline=False, visible=False, autorange="reversed", scaleanchor="x", scaleratio=1)
         )
         st.plotly_chart(fig, use_container_width=True)
-        
         st.download_button("Pobierz Raport", generate_excel_download(df_det, df_sum), "Raport.xlsx")
